@@ -1141,35 +1141,35 @@ final class RoundButton: NSButton {
         path.addClip()
         if isAccent {
             Plastic.gradient([
-                (0.00, th.accentTop.highlight(withLevel: 0.35) ?? th.accentTop),
-                (0.46, th.accentTop),
-                (0.50, th.accentMid),
+                (0.00, th.accentTop.highlight(withLevel: 0.30) ?? th.accentTop),
+                (0.55, th.accentMid),
                 (1.00, th.accentBottom),
             ])?.draw(in: rect, angle: pressed ? 90 : -90)
         } else {
             Plastic.gradient([
                 (0.00, NSColor(white: 1.0, alpha: 1)),
-                (0.46, NSColor(srgbRed: 0.965, green: 0.970, blue: 0.980, alpha: 1)),
-                (0.50, NSColor(srgbRed: 0.895, green: 0.905, blue: 0.925, alpha: 1)),
+                (0.55, NSColor(srgbRed: 0.925, green: 0.935, blue: 0.950, alpha: 1)),
                 (1.00, NSColor(srgbRed: 0.78, green: 0.80, blue: 0.83, alpha: 1)),
             ])?.draw(in: rect, angle: pressed ? 90 : -90)
         }
 
         // Broad specular across the top half, hard-terminated at the equator —
         // the same trick that makes the plate read as lacquered.
-        let gloss = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.52)
+        let gloss = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.58)
         Plastic.gradient([
-            (0.00, NSColor(white: 1, alpha: pressed ? 0.30 : 0.62)),
-            (0.85, NSColor(white: 1, alpha: 0.06)),
+            (0.00, NSColor(white: 1, alpha: pressed ? 0.26 : 0.55)),
+            (0.55, NSColor(white: 1, alpha: 0.20)),
+            (0.86, NSColor(white: 1, alpha: 0.04)),
             (1.00, NSColor(white: 1, alpha: 0.0)),
         ])?.draw(in: gloss, angle: -90)
 
         // Warm bounce along the lower rim.
-        let bounce = NSRect(x: rect.minX, y: rect.maxY - rect.height * 0.22,
-                            width: rect.width, height: rect.height * 0.22)
+        let bounce = NSRect(x: rect.minX, y: rect.maxY - rect.height * 0.34,
+                            width: rect.width, height: rect.height * 0.34)
         Plastic.gradient([
-            (0, NSColor(white: 1, alpha: 0)),
-            (1, Plastic.bounceLight.withAlphaComponent(0.40)),
+            (0.0, NSColor(white: 1, alpha: 0)),
+            (0.6, Plastic.bounceLight.withAlphaComponent(0.10)),
+            (1.0, Plastic.bounceLight.withAlphaComponent(0.26)),
         ])?.draw(in: bounce, angle: -90)
         NSGraphicsContext.restoreGraphicsState()
 

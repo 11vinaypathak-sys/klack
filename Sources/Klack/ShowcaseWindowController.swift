@@ -198,8 +198,21 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildLamps(into chassis: NSView) {
         let packs = audioEngine?.availableProfiles ?? []
-        for (i, name) in packs.prefix(4).enumerated() {
-            let cy = 132 + CGFloat(i) * 40
+
+        // The stack has to survive the user adding packs. Spacing shrinks to
+        // fit the column instead of a fixed step overflowing the chassis, and
+        // the run is centred so it stays balanced at two packs or eight.
+        let columnTop: CGFloat = 96
+        let columnBottom: CGFloat = 284      // clear of the THEME button below
+        let available = columnBottom - columnTop
+        let count = max(1, packs.count)
+        let spacing = min(40, available / CGFloat(count))
+        let firstCY = columnTop + (available - spacing * CGFloat(count - 1)) / 2
+        // Below this the label can't fit under the lamp without colliding.
+        let showLabels = spacing >= 28
+
+        for (i, name) in packs.enumerated() {
+            let cy = firstCY + CGFloat(i) * spacing
             let lamp = LEDLamp(frame: NSRect(x: 29, y: cy - 11, width: 22, height: 22))
             lamp.isLit = (name == audioEngine?.currentProfile)
             lamp.identifier = NSUserInterfaceItemIdentifier(name)
@@ -212,7 +225,12 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             label.textColor = NSColor(white: 1, alpha: lamp.isLit ? 0.85 : 0.35)
             label.alignment = .center
             label.backgroundColor = .clear
+            label.lineBreakMode = .byTruncatingTail
             label.frame = NSRect(x: 6, y: cy + 13, width: 68, height: 10)
+            label.isHidden = !showLabels
+            // With labels suppressed the lamp still needs to identify itself.
+            label.toolTip = ClickAudioEngine.label(for: name)
+            lamp.toolTip = ClickAudioEngine.label(for: name)
             chassis.addSubview(label)
 
             lamps.append((name, lamp, label))
