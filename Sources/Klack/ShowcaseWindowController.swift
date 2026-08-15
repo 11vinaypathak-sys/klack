@@ -33,11 +33,13 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     private let plateOrigin = NSPoint(x: 80, y: 22)
     private let plateSize = NSSize(width: 400, height: 356)
 
-    /// Params that live in the slide-out drawer. TONE, BODY and BRIGHT sit on
-    /// the front panel, so they must not be repeated here — `trimKnobs` is
-    /// keyed by param, and a duplicate key would leave the two knobs for the
-    /// same parameter unable to stay in sync.
+    /// Every synth param lives in the drawer now; the front panel stays clear
+    /// for playing. `trimKnobs` is keyed by param, so no key may appear twice
+    /// or the two knobs for it could never stay in sync.
     private let drawerSpecs: [(key: String, label: String, min: Double, max: Double)] = [
+        ("pitch", "TONE", 400, 3200),
+        ("body", "BODY", 0, 1),
+        ("brightness", "BRIGHT", 0, 1),
         ("snappiness", "SNAP", 0, 1),
         ("attack", "ATTACK", 0, 1),
         ("reverb", "REVERB", 0, 1),
@@ -101,9 +103,10 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         isBoosting = boost > 1.02
         lastWasSpace = isSpace
         display.backlightBoost = min(0.18, display.backlightBoost + 0.09)
-        // The meter twitches above the set level on each hit, like a real VU
-        // needle, then settles back.
-        volumeMeter.activityBoost = min(0.10, volumeMeter.activityBoost + 0.05 * intensity)
+        // Typing charges the meter: it climbs toward the volume ceiling while
+        // you type and falls back when you stop, so the bar reads as activity
+        // rather than sitting pinned at the setting.
+        volumeMeter.activityLevel = min(1.0, volumeMeter.activityLevel + 0.16 + 0.14 * intensity)
         refreshDisplay()
         startBacklightDecay()
     }
@@ -114,10 +117,10 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { t.invalidate(); return }
             self.display.backlightBoost *= 0.82
             self.display.needsDisplay = true
-            self.volumeMeter.activityBoost *= 0.78
-            if self.display.backlightBoost < 0.005 {
+            self.volumeMeter.activityLevel *= 0.93
+            if self.display.backlightBoost < 0.005 && self.volumeMeter.activityLevel < 0.02 {
                 self.display.backlightBoost = 0
-                self.volumeMeter.activityBoost = 0
+                self.volumeMeter.activityLevel = 0
                 self.display.needsDisplay = true
                 t.invalidate()
                 self.backlightDecay = nil
@@ -205,7 +208,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     private func buildChassisFurniture(into chassis: NSView) {
         // The drawer lives to the right of the base chassis width and is
         // revealed by widening the window, so it appears to slide out.
-        mixerDrawer = FlippedContainer(frame: NSRect(x: chassisW - 10, y: 60, width: drawerWidth, height: 280))
+        mixerDrawer = FlippedContainer(frame: NSRect(x: chassisW - 10, y: 34, width: drawerWidth, height: 332))
         mixerDrawer.wantsLayer = true
         mixerDrawer.layer?.backgroundColor = NSColor(srgbRed: 0.10, green: 0.12, blue: 0.17, alpha: 1).cgColor
         mixerDrawer.layer?.cornerRadius = 16
@@ -310,13 +313,9 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         save.action = #selector(saveMix)
         plate.addSubview(save)
 
-        // Trim knobs get more room now the big dial is gone.
-        addTrimKnob(key: "pitch", label: "TONE", center: NSPoint(x: 216, y: rowY), into: plate,
-                    min: 400, max: 3200, value: Double(mixerParams.pitch))
-        addTrimKnob(key: "body", label: "BODY", center: NSPoint(x: 288, y: rowY), into: plate,
-                    min: 0, max: 1, value: Double(mixerParams.body))
-        addTrimKnob(key: "brightness", label: "BRIGHT", center: NSPoint(x: 360, y: rowY), into: plate,
-                    min: 0, max: 1, value: Double(mixerParams.brightness))
+        // The front panel deliberately carries no trim knobs — synth params all
+        // live in the MIXER drawer, keeping this face about playing rather than
+        // tweaking.
 
         // Volume as a full-width LED ladder along the bottom edge.
         let volCaption = NSTextField(labelWithString: "VOLUME")
@@ -350,11 +349,11 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         header.frame = NSRect(x: 20, y: 16, width: drawerWidth - 40, height: 12)
         mixerDrawer.addSubview(header)
 
-        // Two-by-two grid of the remaining synth params.
+        // Two-column grid; three rows now that every synth param lives here.
         for (i, spec) in drawerSpecs.enumerated() {
             let col = CGFloat(i % 2), row = CGFloat(i / 2)
             let cx = 52 + col * 86
-            let cy = 78 + row * 108
+            let cy = 66 + row * 84
 
             let knob = KnobControl(frame: NSRect(x: cx - 28, y: cy - 28, width: 56, height: 56))
             knob.minValue = spec.min
@@ -375,7 +374,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             mixerDrawer.addSubview(caption)
         }
 
-        let reset = NSButton(frame: NSRect(x: 30, y: 232, width: drawerWidth - 60, height: 26))
+        let reset = NSButton(frame: NSRect(x: 30, y: 288, width: drawerWidth - 60, height: 26))
         reset.title = "Reset"
         reset.bezelStyle = .rounded
         reset.font = .systemFont(ofSize: 11)
@@ -482,10 +481,18 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
               audioEngine?.switchProfile(to: name) == true else { return }
         for entry in lamps {
             entry.lamp.isLit = (entry.name == name)
-            entry.label.textColor = NSColor(white: 1, alpha: entry.lamp.isLit ? 0.85 : 0.35)
         }
         audioEngine?.playKeyDown(isSpace: false)
-        refreshDisplay()
+
+        // Each pack carries its own colour scheme, so picking a sound restyles
+        // the whole panel — the instrument ends up looking like what it sounds
+        // like.
+        if let index = lamps.firstIndex(where: { $0.name == name }) {
+            themeIndex = index % Theme.all.count
+            Theme.current = Theme.all[themeIndex]
+            styleThemeButton()
+        }
+        restyleForTheme()
     }
 
     @objc private func volumeChanged(_ sender: LevelMeterControl) {

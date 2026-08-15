@@ -176,6 +176,77 @@ enum Plastic {
         NSGradient(colors: stops.map { $0.1 }, atLocations: stops.map { $0.0 }, colorSpace: .sRGB)
     }
 
+    /// Chrome reads as chrome because the ramp is *non-monotonic*: it reverses
+    /// hard at a horizon line where reflected sky meets reflected ground. The
+    /// 0.48 -> 0.52 flip must stay near-instant — smooth it out and you get
+    /// brushed aluminium instead of a mirror.
+    static let chromeStops: [(CGFloat, NSColor)] = [
+        (0.00, NSColor(srgbRed: 0.42, green: 0.45, blue: 0.49, alpha: 1)),
+        (0.08, NSColor(srgbRed: 0.72, green: 0.76, blue: 0.80, alpha: 1)),
+        (0.30, NSColor(srgbRed: 0.87, green: 0.91, blue: 0.94, alpha: 1)),
+        (0.48, NSColor(srgbRed: 0.96, green: 0.98, blue: 1.00, alpha: 1)), // hotspot
+        (0.52, NSColor(srgbRed: 0.20, green: 0.23, blue: 0.27, alpha: 1)), // horizon flip
+        (0.56, NSColor(srgbRed: 0.31, green: 0.35, blue: 0.40, alpha: 1)),
+        (0.74, NSColor(srgbRed: 0.60, green: 0.64, blue: 0.69, alpha: 1)),
+        (0.88, NSColor(srgbRed: 0.80, green: 0.84, blue: 0.88, alpha: 1)),
+        (1.00, NSColor(srgbRed: 0.46, green: 0.49, blue: 0.53, alpha: 1)),
+    ]
+
+    static func drawChrome(in path: NSBezierPath) {
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        let r = path.bounds
+        gradient(chromeStops)?.draw(in: r, angle: -90)
+        // Edge-wrap: bright at both sides, faking the reflection curling round
+        // a cylindrical surface.
+        gradient([
+            (0.00, NSColor(white: 1, alpha: 0.22)),
+            (0.35, NSColor(white: 1, alpha: 0.0)),
+            (0.65, NSColor(white: 1, alpha: 0.0)),
+            (1.00, NSColor(white: 1, alpha: 0.22)),
+        ])?.draw(in: r, angle: 0)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// Anamorphic star glint — the era's punctuation mark on a gloss peak.
+    /// Spikes are deliberately unequal; four equal ones read as a cross.
+    static func drawGlint(at c: NSPoint, length L: CGFloat, alpha: CGFloat = 1.0) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.setBlendMode(.plusLighter)
+        ctx.setAlpha(alpha)
+
+        func spike(angle: CGFloat, len: CGFloat) {
+            let base = L * 0.045
+            let tip = NSPoint(x: c.x + cos(angle) * len, y: c.y + sin(angle) * len)
+            let n = angle + .pi / 2
+            let p = NSBezierPath()
+            p.move(to: NSPoint(x: c.x + cos(n) * base, y: c.y + sin(n) * base))
+            p.line(to: tip)
+            p.line(to: NSPoint(x: c.x - cos(n) * base, y: c.y - sin(n) * base))
+            p.close()
+            NSColor(white: 1, alpha: 0.9).setFill()
+            p.fill()
+        }
+        spike(angle: 0, len: L)
+        spike(angle: .pi, len: L)
+        spike(angle: .pi / 2, len: L * 0.55)
+        spike(angle: -.pi / 2, len: L * 0.55)
+
+        let coreR = L * 0.16
+        let coreRect = NSRect(x: c.x - coreR, y: c.y - coreR, width: coreR * 2, height: coreR * 2)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(ovalIn: coreRect).addClip()
+        gradient([
+            (0.0, NSColor(white: 1, alpha: 1.0)),
+            (0.25, NSColor(white: 1, alpha: 0.5)),
+            (1.0, NSColor(white: 1, alpha: 0.0)),
+        ])?.draw(fromCenter: c, radius: 0, toCenter: c, radius: coreR, options: [])
+        NSGraphicsContext.restoreGraphicsState()
+
+        ctx.restoreGState()
+    }
+
     /// DSEG7 Classic (SIL OFL) is a true seven-segment face. Registered once
     /// from the bundle; falls back to a monospace face if it's missing.
     private static var didRegisterFonts = false
@@ -215,14 +286,11 @@ final class ChassisView: NSView {
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
 
-        // Soft-touch grain, so the dark areas aren't dead flat. Subtle enough
-        // to read as a moulded finish rather than noise.
-        if let noise = Plastic.noiseTile, let ctx = NSGraphicsContext.current?.cgContext {
-            ctx.saveGState()
-            ctx.setAlpha(0.14)
-            ctx.draw(noise, in: NSRect(x: 0, y: 0, width: 64, height: 64), byTiling: true)
-            ctx.restoreGState()
-        }
+        // No bitmap grain on the chassis. The tile is 64 *pixels* but was being
+        // drawn into a 64-*point* rect, so on a Retina display it upscaled 2x
+        // and the noise became coarse, visible speckle instead of a fine
+        // finish. A soft-touch surface is better suggested by the gradient and
+        // sheen below than by tiled noise.
 
         // Cool sheen down the upper left, warm bounce along the bottom — the
         // temperature split keeps a near-black surface from going muddy.
@@ -351,11 +419,25 @@ final class PlasticPlateView: NSView {
 
         NSGraphicsContext.restoreGraphicsState()
 
+        // Chrome trim rail across the lower plate — the mirrored horizon is
+        // what pulls the whole panel toward metal rather than plastic.
+        let rail = NSBezierPath(roundedRect: NSRect(x: 22, y: bounds.height - 74, width: bounds.width - 44, height: 7),
+                                xRadius: 3.5, yRadius: 3.5)
+        Plastic.drawChrome(in: rail)
+        NSColor(white: 0, alpha: 0.35).setStroke()
+        rail.lineWidth = 0.75
+        rail.stroke()
+
         // Moulded edges.
         let inner = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 29.5, yRadius: 29.5)
         NSColor(white: 1, alpha: 0.9).setStroke()
         inner.lineWidth = 1
         inner.stroke()
+
+        // Glint on the gloss peak, drifting slightly so it never looks pasted.
+        let drift = sin(MotionClock.shared.phase * 0.55) * 4
+        Plastic.drawGlint(at: NSPoint(x: bounds.width * 0.26 + drift, y: bounds.height * 0.08),
+                          length: 26, alpha: 0.5)
     }
 }
 
@@ -418,10 +500,12 @@ final class BacklitDisplayView: NSView {
         // (iv) Grain. Kept very faint and composited normally — `.overlay`
         // amplifies contrast against bright colours, which on amber turned
         // this into visible static rather than a subtle phosphor texture.
+        // Drawn at half size so the tile lands 1:1 on Retina pixels instead of
+        // being doubled into visible speckle.
         if let noise = Plastic.noiseTile, let ctx = NSGraphicsContext.current?.cgContext {
             ctx.saveGState()
-            ctx.setAlpha(0.06)
-            ctx.draw(noise, in: NSRect(x: 0, y: 0, width: 64, height: 64), byTiling: true)
+            ctx.setAlpha(0.035)
+            ctx.draw(noise, in: NSRect(x: 0, y: 0, width: 32, height: 32), byTiling: true)
             ctx.restoreGState()
         }
 
@@ -725,9 +809,13 @@ final class KnobControl: NSControl {
 final class LevelMeterControl: NSControl {
     override var isFlipped: Bool { true }
 
+    /// The volume setting. Shown as a ceiling marker, not as the lit bar —
+    /// this is the level typing is allowed to reach.
     var value: Double = 0.8 { didSet { needsDisplay = true } }
-    /// Momentary lift driven by keystrokes, so the meter twitches with typing.
-    var activityBoost: CGFloat = 0 { didSet { needsDisplay = true } }
+
+    /// How hard you're currently typing, 0...1. The lit bar tracks this, so
+    /// the meter rests low and climbs as you type instead of sitting pinned.
+    var activityLevel: CGFloat = 0 { didSet { needsDisplay = true } }
 
     private let segmentCount = 24
     private let gap: CGFloat = 3
@@ -755,8 +843,15 @@ final class LevelMeterControl: NSControl {
         let segW = (usable - gap * CGFloat(segmentCount - 1)) / CGFloat(segmentCount)
         let segH = bounds.height - inset * 2
 
-        let level = min(1.0, max(0.0, CGFloat(value) + activityBoost))
+        // The bar shows activity, capped by the volume setting — so typing
+        // fills it up toward whatever ceiling you've dialled in.
+        let ceiling = CGFloat(min(1.0, max(0.0, value)))
+        // A small resting floor plus a slow idle shimmer, so a quiet meter
+        // still reads as powered rather than switched off.
+        let idle = 0.06 + 0.03 * abs(sin(MotionClock.shared.phase * 1.1))
+        let level = min(ceiling, max(idle, max(0.0, activityLevel)) * ceiling)
         let litCount = Int((level * CGFloat(segmentCount)).rounded())
+        let ceilingIndex = Int((ceiling * CGFloat(segmentCount)).rounded()) - 1
 
         for i in 0..<segmentCount {
             let x = inset + CGFloat(i) * (segW + gap)
@@ -789,6 +884,17 @@ final class LevelMeterControl: NSControl {
                 base.withAlphaComponent(0.13).setFill()
                 path.fill()
             }
+
+            // Ceiling marker: shows where the volume is set, so the control
+            // still reads as a setting even while the bar is bouncing.
+            if i == ceilingIndex {
+                NSColor(white: 1, alpha: 0.85).setFill()
+                NSBezierPath(roundedRect: NSRect(x: x - 1.5, y: inset - 1,
+                                                 width: segW + 3, height: segH + 2),
+                             xRadius: 2, yRadius: 2).fill()
+                base.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+            }
         }
         NSGraphicsContext.restoreGraphicsState()
 
@@ -804,16 +910,45 @@ final class LevelMeterControl: NSControl {
 
     // MARK: Interaction — click or drag anywhere to set the level.
 
-    private func setValue(from event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+    private var dragOrigin: NSPoint = .zero
+    private var dragStartValue: Double = 0
+    private var dragIsVertical: Bool?
+
+    private func valueFromX(_ p: NSPoint) -> Double {
         let inset: CGFloat = 5
         let usable = max(1, bounds.width - inset * 2)
-        value = Double(min(1, max(0, (p.x - inset) / usable)))
+        return Double(min(1, max(0, (p.x - inset) / usable)))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragOrigin = convert(event.locationInWindow, from: nil)
+        dragStartValue = value
+        dragIsVertical = nil
+        value = valueFromX(dragOrigin)
         sendAction(action, to: target)
     }
 
-    override func mouseDown(with event: NSEvent) { setValue(from: event) }
-    override func mouseDragged(with event: NSEvent) { setValue(from: event) }
+    /// Supports both gestures: drag along the bar to scrub, or drag up/down
+    /// anywhere for finer control. Which one you get is decided by the first
+    /// few pixels of movement, then locked so it doesn't flip mid-drag.
+    override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let dx = p.x - dragOrigin.x
+        let dy = dragOrigin.y - p.y
+
+        if dragIsVertical == nil {
+            let travel = max(abs(dx), abs(dy))
+            if travel > 3 { dragIsVertical = abs(dy) > abs(dx) }
+        }
+
+        if dragIsVertical == true {
+            let fine = event.modifierFlags.contains(.option) ? 0.3 : 1.0
+            value = min(1, max(0, dragStartValue + Double(dy) / 140.0 * fine))
+        } else {
+            value = valueFromX(p)
+        }
+        sendAction(action, to: target)
+    }
 }
 
 /// Circular glossy button.
@@ -861,8 +996,102 @@ final class RoundButton: NSButton {
 
     override func mouseDown(with event: NSEvent) {
         pressed = true; needsDisplay = true
+        emitPressEffects(from: convert(event.locationInWindow, from: nil))
         super.mouseDown(with: event)
         pressed = false; needsDisplay = true
+    }
+
+    /// Press feedback as Core Animation layers rather than timer-driven
+    /// redraws: these are pure compositing, so the GPU can run them without
+    /// re-rasterising the button every frame.
+    private func emitPressEffects(from point: NSPoint) {
+        wantsLayer = true
+        guard let host = layer else { return }
+        let accent = Theme.current.accentMid
+
+        // Depress: quick down, springier return.
+        let depress = CABasicAnimation(keyPath: "transform.scale")
+        depress.fromValue = 1.0
+        depress.toValue = 0.94
+        depress.duration = 0.07
+        depress.autoreverses = true
+        depress.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+        host.add(depress, forKey: "depress")
+
+        let diagonal = sqrt(bounds.width * bounds.width + bounds.height * bounds.height)
+
+        // Ripple from the click point.
+        let ripple = CAShapeLayer()
+        let r0: CGFloat = 6
+        ripple.path = CGPath(ellipseIn: CGRect(x: point.x - r0, y: point.y - r0, width: r0 * 2, height: r0 * 2), transform: nil)
+        ripple.fillColor = NSColor.clear.cgColor
+        ripple.strokeColor = accent.withAlphaComponent(0.85).cgColor
+        ripple.lineWidth = 2
+        host.addSublayer(ripple)
+
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = 0.15
+        grow.toValue = diagonal / r0 * 0.8
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.55
+        fade.toValue = 0.0
+        let group = CAAnimationGroup()
+        group.animations = [grow, fade]
+        group.duration = 0.52
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+        group.isRemovedOnCompletion = true
+        ripple.opacity = 0
+        ripple.add(group, forKey: "ripple")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { ripple.removeFromSuperlayer() }
+
+        // Three concentric rings, staggered, expanding out past the edge.
+        for i in 0..<3 {
+            let ring = CAShapeLayer()
+            let rr = bounds.width * 0.34
+            ring.path = CGPath(ellipseIn: CGRect(x: bounds.midX - rr, y: bounds.midY - rr,
+                                                 width: rr * 2, height: rr * 2), transform: nil)
+            ring.fillColor = NSColor.clear.cgColor
+            ring.strokeColor = accent.withAlphaComponent(0.7).cgColor
+            ring.lineWidth = 3
+            ring.opacity = 0
+            host.addSublayer(ring)
+
+            let scale = CABasicAnimation(keyPath: "transform.scale")
+            scale.fromValue = 0.55
+            scale.toValue = 1.9
+            let alpha = CABasicAnimation(keyPath: "opacity")
+            alpha.fromValue = 0.40
+            alpha.toValue = 0.0
+            let width = CABasicAnimation(keyPath: "lineWidth")
+            width.fromValue = 3.0
+            width.toValue = 0.5
+            let g = CAAnimationGroup()
+            g.animations = [scale, alpha, width]
+            g.duration = 0.7
+            g.beginTime = CACurrentMediaTime() + Double(i) * 0.09
+            g.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.46, 0.45, 0.94)
+            ring.add(g, forKey: "ring")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8 + Double(i) * 0.09) {
+                ring.removeFromSuperlayer()
+            }
+        }
+
+        // Glow bloom around the whole button.
+        host.shadowColor = accent.cgColor
+        host.shadowOffset = .zero
+        let bloom = CABasicAnimation(keyPath: "shadowOpacity")
+        bloom.fromValue = 0.0
+        bloom.toValue = 0.85
+        bloom.duration = 0.14
+        bloom.autoreverses = true
+        bloom.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        host.add(bloom, forKey: "bloom")
+        let radius = CABasicAnimation(keyPath: "shadowRadius")
+        radius.fromValue = 0.0
+        radius.toValue = 20.0
+        radius.duration = 0.14
+        radius.autoreverses = true
+        host.add(radius, forKey: "bloomRadius")
     }
 }
 
