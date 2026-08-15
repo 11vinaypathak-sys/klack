@@ -23,6 +23,9 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     private var backlightDecay: Timer?
     private var isBoosting = false
     private var lastWasSpace = false
+    private var themeButton: NSButton!
+    private var themeIndex = 0
+    private var idleMotionRunning = false
 
     private let chassisW: CGFloat = 560
     private let chassisH: CGFloat = 400
@@ -82,6 +85,8 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         backlightDecay?.invalidate()
         backlightDecay = nil
+        MotionClock.shared.stop()
+        idleMotionRunning = false
         onClosed?()
     }
 
@@ -126,6 +131,23 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         refreshDisplay()
+        startIdleMotion()
+    }
+
+    /// Idle motion runs only while the panel is on screen — a menu-bar app
+    /// shouldn't hold a 30fps timer open all day for a window nobody's looking
+    /// at.
+    private func startIdleMotion() {
+        guard !idleMotionRunning else { return }
+        idleMotionRunning = true
+        MotionClock.shared.subscribe { [weak self] in
+            guard let self, self.window?.isVisible == true else { return }
+            self.display.needsDisplay = true
+            for entry in self.lamps where entry.lamp.isLit {
+                entry.lamp.needsDisplay = true
+            }
+        }
+        MotionClock.shared.start()
     }
 
     // MARK: Build
@@ -226,6 +248,25 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             ridge.layer?.cornerRadius = 1.5
             chassis.addSubview(ridge)
         }
+
+        // Theme selector, bottom-left of the chassis under the lamp stack.
+        themeButton = NSButton(frame: NSRect(x: 14, y: 300, width: 52, height: 22))
+        themeButton.isBordered = false
+        themeButton.wantsLayer = true
+        themeButton.layer?.cornerRadius = 6
+        themeButton.layer?.borderWidth = 1
+        themeButton.target = self
+        themeButton.action = #selector(cycleTheme)
+        chassis.addSubview(themeButton)
+
+        let themeCaption = NSTextField(labelWithString: "THEME")
+        themeCaption.font = .systemFont(ofSize: 6.5, weight: .bold)
+        themeCaption.textColor = NSColor(white: 1, alpha: 0.32)
+        themeCaption.alignment = .center
+        themeCaption.backgroundColor = .clear
+        themeCaption.frame = NSRect(x: 14, y: 288, width: 52, height: 9)
+        chassis.addSubview(themeCaption)
+        styleThemeButton()
     }
 
     private func buildDisplay(into plate: NSView) {
@@ -400,6 +441,41 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Actions
 
     @objc private func closeWindow() { window?.close() }
+
+    private func styleThemeButton() {
+        let th = Theme.current
+        themeButton.attributedTitle = NSAttributedString(string: th.name, attributes: [
+            .font: NSFont.systemFont(ofSize: 7.5, weight: .bold),
+            .foregroundColor: NSColor(white: 1, alpha: 0.85),
+        ])
+        themeButton.layer?.backgroundColor = th.accentMid.withAlphaComponent(0.22).cgColor
+        themeButton.layer?.borderColor = th.accentMid.withAlphaComponent(0.65).cgColor
+    }
+
+    @objc private func cycleTheme() {
+        themeIndex = (themeIndex + 1) % Theme.all.count
+        Theme.current = Theme.all[themeIndex]
+        styleThemeButton()
+        restyleForTheme()
+    }
+
+    /// A theme swap touches colours drawn deep inside cached bitmaps and
+    /// layer-backed views, so everything has to be invalidated explicitly —
+    /// marking only the root would leave stale subviews behind.
+    private func restyleForTheme() {
+        guard let root = window?.contentView else { return }
+        func invalidate(_ v: NSView) {
+            v.needsDisplay = true
+            v.subviews.forEach(invalidate)
+        }
+        invalidate(root)
+
+        for entry in lamps {
+            entry.label.textColor = NSColor(white: 1, alpha: entry.lamp.isLit ? 0.85 : 0.35)
+        }
+        display.layer?.shadowColor = Theme.current.displayMid.cgColor
+        refreshDisplay()
+    }
 
     @objc private func selectPack(_ sender: LEDLamp) {
         guard let name = sender.identifier?.rawValue,

@@ -3,6 +3,137 @@ import Cocoa
 // V2 skin: dark chassis + glossy white plastic plate + backlit amber display.
 // All views are `isFlipped` so coordinates match the Figma reference directly.
 
+/// A full colour scheme for the panel. Everything tinted — backlight, LEDs,
+/// accents, meter ramp, even the chassis temperature — comes from here, so
+/// switching themes restyles the whole instrument rather than recolouring
+/// one element.
+struct Theme {
+    let name: String
+    let displayCore: NSColor
+    let displayMid: NSColor
+    let displayEdge: NSColor
+    let displayInk: NSColor
+    let bezelLeak: NSColor
+    let accentTop: NSColor
+    let accentMid: NSColor
+    let accentBottom: NSColor
+    let lampLit: NSColor
+    let chassisTop: NSColor
+    let chassisMid: NSColor
+    let chassisBottom: NSColor
+    /// Low → mid → hot stops for the level meter ladder.
+    let meterRamp: (NSColor, NSColor, NSColor)
+
+    static let amber = Theme(
+        name: "AMBER",
+        displayCore: NSColor(srgbRed: 1.00, green: 0.72, blue: 0.30, alpha: 1),
+        displayMid: NSColor(srgbRed: 0.94, green: 0.60, blue: 0.17, alpha: 1),
+        displayEdge: NSColor(srgbRed: 0.50, green: 0.26, blue: 0.05, alpha: 1),
+        displayInk: NSColor(srgbRed: 0.26, green: 0.13, blue: 0.01, alpha: 1),
+        bezelLeak: NSColor(srgbRed: 1.00, green: 0.85, blue: 0.63, alpha: 1),
+        accentTop: NSColor(srgbRed: 1.00, green: 0.80, blue: 0.32, alpha: 1),
+        accentMid: NSColor(srgbRed: 0.98, green: 0.66, blue: 0.16, alpha: 1),
+        accentBottom: NSColor(srgbRed: 0.88, green: 0.50, blue: 0.08, alpha: 1),
+        lampLit: NSColor(srgbRed: 0.99, green: 0.66, blue: 0.13, alpha: 1),
+        chassisTop: NSColor(srgbRed: 0.23, green: 0.27, blue: 0.35, alpha: 1),
+        chassisMid: NSColor(srgbRed: 0.13, green: 0.16, blue: 0.22, alpha: 1),
+        chassisBottom: NSColor(srgbRed: 0.07, green: 0.09, blue: 0.13, alpha: 1),
+        meterRamp: (NSColor(srgbRed: 0.42, green: 0.86, blue: 0.52, alpha: 1),
+                    NSColor(srgbRed: 0.99, green: 0.72, blue: 0.15, alpha: 1),
+                    NSColor(srgbRed: 0.95, green: 0.26, blue: 0.20, alpha: 1))
+    )
+
+    static let cyan = Theme(
+        name: "ICE",
+        displayCore: NSColor(srgbRed: 0.62, green: 0.94, blue: 1.00, alpha: 1),
+        displayMid: NSColor(srgbRed: 0.24, green: 0.72, blue: 0.90, alpha: 1),
+        displayEdge: NSColor(srgbRed: 0.03, green: 0.24, blue: 0.38, alpha: 1),
+        displayInk: NSColor(srgbRed: 0.02, green: 0.13, blue: 0.20, alpha: 1),
+        bezelLeak: NSColor(srgbRed: 0.72, green: 0.95, blue: 1.00, alpha: 1),
+        accentTop: NSColor(srgbRed: 0.48, green: 0.88, blue: 1.00, alpha: 1),
+        accentMid: NSColor(srgbRed: 0.16, green: 0.68, blue: 0.90, alpha: 1),
+        accentBottom: NSColor(srgbRed: 0.05, green: 0.46, blue: 0.68, alpha: 1),
+        lampLit: NSColor(srgbRed: 0.30, green: 0.80, blue: 1.00, alpha: 1),
+        chassisTop: NSColor(srgbRed: 0.20, green: 0.26, blue: 0.34, alpha: 1),
+        chassisMid: NSColor(srgbRed: 0.10, green: 0.15, blue: 0.21, alpha: 1),
+        chassisBottom: NSColor(srgbRed: 0.05, green: 0.08, blue: 0.12, alpha: 1),
+        meterRamp: (NSColor(srgbRed: 0.30, green: 0.78, blue: 0.98, alpha: 1),
+                    NSColor(srgbRed: 0.55, green: 0.92, blue: 1.00, alpha: 1),
+                    NSColor(srgbRed: 0.95, green: 0.98, blue: 1.00, alpha: 1))
+    )
+
+    static let phosphor = Theme(
+        name: "PHOSPHOR",
+        displayCore: NSColor(srgbRed: 0.62, green: 1.00, blue: 0.55, alpha: 1),
+        displayMid: NSColor(srgbRed: 0.28, green: 0.76, blue: 0.28, alpha: 1),
+        displayEdge: NSColor(srgbRed: 0.03, green: 0.22, blue: 0.06, alpha: 1),
+        displayInk: NSColor(srgbRed: 0.02, green: 0.14, blue: 0.03, alpha: 1),
+        bezelLeak: NSColor(srgbRed: 0.75, green: 1.00, blue: 0.70, alpha: 1),
+        accentTop: NSColor(srgbRed: 0.62, green: 0.98, blue: 0.52, alpha: 1),
+        accentMid: NSColor(srgbRed: 0.32, green: 0.80, blue: 0.30, alpha: 1),
+        accentBottom: NSColor(srgbRed: 0.16, green: 0.56, blue: 0.18, alpha: 1),
+        lampLit: NSColor(srgbRed: 0.44, green: 0.95, blue: 0.40, alpha: 1),
+        chassisTop: NSColor(srgbRed: 0.19, green: 0.24, blue: 0.21, alpha: 1),
+        chassisMid: NSColor(srgbRed: 0.10, green: 0.14, blue: 0.11, alpha: 1),
+        chassisBottom: NSColor(srgbRed: 0.05, green: 0.08, blue: 0.06, alpha: 1),
+        meterRamp: (NSColor(srgbRed: 0.34, green: 0.82, blue: 0.34, alpha: 1),
+                    NSColor(srgbRed: 0.62, green: 1.00, blue: 0.48, alpha: 1),
+                    NSColor(srgbRed: 0.92, green: 1.00, blue: 0.55, alpha: 1))
+    )
+
+    static let synthwave = Theme(
+        name: "SYNTH",
+        displayCore: NSColor(srgbRed: 1.00, green: 0.62, blue: 0.92, alpha: 1),
+        displayMid: NSColor(srgbRed: 0.82, green: 0.24, blue: 0.68, alpha: 1),
+        displayEdge: NSColor(srgbRed: 0.26, green: 0.04, blue: 0.30, alpha: 1),
+        displayInk: NSColor(srgbRed: 0.18, green: 0.02, blue: 0.20, alpha: 1),
+        bezelLeak: NSColor(srgbRed: 1.00, green: 0.72, blue: 0.95, alpha: 1),
+        accentTop: NSColor(srgbRed: 1.00, green: 0.55, blue: 0.85, alpha: 1),
+        accentMid: NSColor(srgbRed: 0.88, green: 0.24, blue: 0.66, alpha: 1),
+        accentBottom: NSColor(srgbRed: 0.58, green: 0.12, blue: 0.52, alpha: 1),
+        lampLit: NSColor(srgbRed: 1.00, green: 0.38, blue: 0.80, alpha: 1),
+        chassisTop: NSColor(srgbRed: 0.24, green: 0.20, blue: 0.36, alpha: 1),
+        chassisMid: NSColor(srgbRed: 0.13, green: 0.10, blue: 0.22, alpha: 1),
+        chassisBottom: NSColor(srgbRed: 0.07, green: 0.05, blue: 0.13, alpha: 1),
+        meterRamp: (NSColor(srgbRed: 0.42, green: 0.55, blue: 1.00, alpha: 1),
+                    NSColor(srgbRed: 0.85, green: 0.35, blue: 0.95, alpha: 1),
+                    NSColor(srgbRed: 1.00, green: 0.30, blue: 0.55, alpha: 1))
+    )
+
+    static let all: [Theme] = [.amber, .cyan, .phosphor, .synthwave]
+
+    /// Read by every view at draw time. Changing it and invalidating the view
+    /// tree restyles the whole panel.
+    static var current: Theme = .amber
+}
+
+/// Drives idle motion — a slow scanline sweep and a breathing pulse — so the
+/// panel reads as powered-on rather than as a static picture. One shared
+/// clock keeps every element in phase, and it only runs while visible.
+final class MotionClock {
+    static let shared = MotionClock()
+    private var timer: Timer?
+    private var subscribers: [() -> Void] = []
+    private(set) var phase: CGFloat = 0
+
+    func subscribe(_ block: @escaping () -> Void) { subscribers.append(block) }
+
+    func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.phase += 1.0 / 30.0
+            for s in self.subscribers { s() }
+        }
+        if let t = timer { RunLoop.main.add(t, forMode: .common) }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
 enum Plastic {
     // White plastic is never neutral grey — the body runs cool at the
     // highlight and warm in shadow, which is what separates moulded plastic
@@ -77,7 +208,8 @@ final class ChassisView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds, xRadius: 26, yRadius: 26)
-        Plastic.gradient([(0, Plastic.chassisTop), (0.5, Plastic.chassisMid), (1, Plastic.chassisBottom)])?
+        let th = Theme.current
+        Plastic.gradient([(0, th.chassisTop), (0.5, th.chassisMid), (1, th.chassisBottom)])?
             .draw(in: path, angle: -90)
 
         NSGraphicsContext.saveGraphicsState()
@@ -250,11 +382,15 @@ final class BacklitDisplayView: NSView {
         let b = min(0.18, backlightBoost)
         let centre = NSPoint(x: bounds.midX, y: bounds.height * 0.40)
         let radius = max(bounds.width, bounds.height) * 0.78
+        let th = Theme.current
+        func lift(_ c: NSColor, _ amount: CGFloat) -> NSColor {
+            c.blended(withFraction: amount, of: .white) ?? c
+        }
         Plastic.gradient([
-            (0.00, NSColor(srgbRed: min(1, 1.0 + b), green: min(1, 0.72 + b), blue: min(1, 0.30 + b * 1.4), alpha: 1)),
-            (0.45, NSColor(srgbRed: min(1, 0.94 + b), green: min(1, 0.60 + b), blue: min(1, 0.17 + b), alpha: 1)),
-            (0.80, NSColor(srgbRed: 0.77 + b * 0.5, green: 0.44 + b * 0.5, blue: 0.10, alpha: 1)),
-            (1.00, NSColor(srgbRed: 0.50 + b * 0.4, green: 0.26 + b * 0.3, blue: 0.05, alpha: 1)),
+            (0.00, lift(th.displayCore, b * 2.2)),
+            (0.45, lift(th.displayMid, b * 1.8)),
+            (0.80, lift(th.displayMid.blended(withFraction: 0.45, of: th.displayEdge) ?? th.displayMid, b)),
+            (1.00, lift(th.displayEdge, b * 0.6)),
         ])?.draw(fromCenter: centre, radius: 0, toCenter: centre, radius: radius, options: [])
 
         // (ii) Vignette, deliberately tighter than the bloom — the radius
@@ -267,6 +403,17 @@ final class BacklitDisplayView: NSView {
                  toCenter: NSPoint(x: bounds.midX, y: bounds.midY), radius: bounds.width * 0.62, options: [])
 
         drawContent()
+
+        // A soft band sweeping down the glass — the refresh cue that makes a
+        // display read as running rather than as a printed panel.
+        let sweepPeriod: CGFloat = 4.2
+        let sweepPos = MotionClock.shared.phase.truncatingRemainder(dividingBy: sweepPeriod) / sweepPeriod
+        let sweepY = sweepPos * (bounds.height + 60) - 30
+        Plastic.gradient([
+            (0, NSColor(white: 1, alpha: 0)),
+            (0.5, NSColor(white: 1, alpha: 0.10)),
+            (1, NSColor(white: 1, alpha: 0)),
+        ])?.draw(in: NSRect(x: 0, y: sweepY, width: bounds.width, height: 30), angle: -90)
 
         // (iv) Grain. Kept very faint and composited normally — `.overlay`
         // amplifies contrast against bright colours, which on amber turned
@@ -283,7 +430,7 @@ final class BacklitDisplayView: NSView {
         for (w, a) in [(1.0, 0.35), (2.0, 0.22), (3.0, 0.12), (4.0, 0.06)] {
             let leak = NSBezierPath(roundedRect: bounds.insetBy(dx: w / 2, dy: w / 2),
                                     xRadius: 15 - w / 2, yRadius: 15 - w / 2)
-            NSColor(srgbRed: 1.0, green: 0.85, blue: 0.63, alpha: CGFloat(a)).setStroke()
+            Theme.current.bezelLeak.withAlphaComponent(CGFloat(a)).setStroke()
             leak.lineWidth = CGFloat(w)
             leak.stroke()
         }
@@ -292,7 +439,7 @@ final class BacklitDisplayView: NSView {
     }
 
     private func drawContent() {
-        let ink = Plastic.displayInk
+        let ink = Theme.current.displayInk
 
         for (i, flag) in flags.enumerated() {
             let attrs: [NSAttributedString.Key: Any] = [
@@ -587,10 +734,11 @@ final class LevelMeterControl: NSControl {
 
     /// Colour ramp across the ladder — the last few segments run hot.
     private func colorForSegment(_ i: Int) -> NSColor {
+        let ramp = Theme.current.meterRamp
         let f = CGFloat(i) / CGFloat(segmentCount - 1)
-        if f > 0.88 { return NSColor(srgbRed: 0.95, green: 0.26, blue: 0.20, alpha: 1) }
-        if f > 0.70 { return NSColor(srgbRed: 0.99, green: 0.72, blue: 0.15, alpha: 1) }
-        return NSColor(srgbRed: 0.42, green: 0.86, blue: 0.52, alpha: 1)
+        if f > 0.88 { return ramp.2 }
+        if f > 0.70 { return ramp.1 }
+        return ramp.0
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -684,10 +832,9 @@ final class RoundButton: NSButton {
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
         if isAccent {
+            let th = Theme.current
             Plastic.gradient([
-                (0, NSColor(srgbRed: 1.00, green: 0.80, blue: 0.32, alpha: 1)),
-                (0.5, NSColor(srgbRed: 0.98, green: 0.66, blue: 0.16, alpha: 1)),
-                (1, NSColor(srgbRed: 0.88, green: 0.50, blue: 0.08, alpha: 1)),
+                (0, th.accentTop), (0.5, th.accentMid), (1, th.accentBottom),
             ])?.draw(in: rect, angle: pressed ? 90 : -90)
         } else {
             Plastic.gradient([
@@ -731,20 +878,23 @@ final class LEDLamp: NSControl {
 
         let inset = bounds.insetBy(dx: 4, dy: 4)
         let lamp = NSBezierPath(ovalIn: inset)
+        let th = Theme.current
+        // Slow breath so an idle panel still looks powered rather than frozen.
+        let breath = 0.75 + 0.25 * sin(MotionClock.shared.phase * 1.9)
         NSGraphicsContext.saveGraphicsState()
         if isLit {
             let glow = NSShadow()
-            glow.shadowColor = NSColor(srgbRed: 1, green: 0.62, blue: 0.12, alpha: 0.9)
+            glow.shadowColor = th.lampLit.withAlphaComponent(0.55 + 0.4 * breath)
             glow.shadowOffset = .zero
-            glow.shadowBlurRadius = 10
+            glow.shadowBlurRadius = 8 + 5 * breath
             glow.set()
         }
         lamp.addClip()
         if isLit {
             Plastic.gradient([
-                (0, NSColor(srgbRed: 1.0, green: 0.90, blue: 0.55, alpha: 1)),
-                (0.6, NSColor(srgbRed: 0.99, green: 0.66, blue: 0.13, alpha: 1)),
-                (1, NSColor(srgbRed: 0.75, green: 0.38, blue: 0.03, alpha: 1)),
+                (0, th.lampLit.highlight(withLevel: 0.55) ?? th.lampLit),
+                (0.6, th.lampLit),
+                (1, th.lampLit.shadow(withLevel: 0.45) ?? th.lampLit),
             ])?.draw(in: inset, angle: -90)
         } else {
             Plastic.gradient([
@@ -759,9 +909,9 @@ final class LEDLamp: NSControl {
             NSGraphicsContext.saveGraphicsState()
             lamp.addClip()
             Plastic.gradient([
-                (0, NSColor(srgbRed: 1.0, green: 0.90, blue: 0.55, alpha: 1)),
-                (0.6, NSColor(srgbRed: 0.99, green: 0.66, blue: 0.13, alpha: 1)),
-                (1, NSColor(srgbRed: 0.75, green: 0.38, blue: 0.03, alpha: 1)),
+                (0, th.lampLit.highlight(withLevel: 0.55) ?? th.lampLit),
+                (0.6, th.lampLit),
+                (1, th.lampLit.shadow(withLevel: 0.45) ?? th.lampLit),
             ])?.draw(in: inset, angle: -90)
             NSGraphicsContext.restoreGraphicsState()
         }

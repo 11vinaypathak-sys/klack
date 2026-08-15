@@ -52,6 +52,13 @@ if let outPath = ProcessInfo.processInfo.environment["KLACK_RENDER_TEST"] {
     let resourceDir = Bundle.main.resourceURL ?? Bundle.main.bundleURL
     let engine = ClickAudioEngine(resourceDirectory: resourceDir)
     let tap = KeyTapManager()
+
+    // Pick a theme up front so each one can be captured for review.
+    if let themeName = ProcessInfo.processInfo.environment["KLACK_THEME"],
+       let match = Theme.all.first(where: { $0.name.caseInsensitiveCompare(themeName) == .orderedSame }) {
+        Theme.current = match
+    }
+
     let controller = ShowcaseWindowController(audioEngine: engine, keyTap: tap)
 
     if ProcessInfo.processInfo.environment["KLACK_RENDER_MIXER"] != nil {
