@@ -13,7 +13,7 @@ if ProcessInfo.processInfo.environment["KLACK_BENCH"] != nil {
         print("\(padded) \(String(format: "%7.3f", perMs)) ms/call  (\(iterations) runs)")
     }
 
-    var defaults = SynthParams()
+    let defaults = SynthParams()
     measure("render 70ms, default params", 200) {
         _ = SoundSynth.render(params: defaults, durationMs: 70, seed: 1)
     }
