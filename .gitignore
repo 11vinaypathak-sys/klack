@@ -1,0 +1,17 @@
+# Swift Package Manager build products
+.build/
+*.o
+*.dSYM/
+
+# Assembled app bundle — rebuilt from sources, not tracked
+Klack.app/
+
+# Generated intermediates
+AppIcon/Klack.iconset/
+AppIcon/icon_1024.png
+
+# macOS
+.DS_Store
+
+# Generated sound profiles are reproducible from generate_sounds.py
+Resources/profiles/
