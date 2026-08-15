@@ -607,7 +607,7 @@ final class BacklitDisplayView: NSView {
         let segFont = Plastic.segmentFont(size: 34)
         NSAttributedString(string: "888", attributes: [
             .font: segFont,
-            .foregroundColor: ink.withAlphaComponent(0.06),
+            .foregroundColor: ink.withAlphaComponent(0.035),
         ]).draw(at: NSPoint(x: 216, y: 44))
 
         let padded = String(repeating: " ", count: max(0, 3 - bigValue.count)) + bigValue
@@ -854,6 +854,100 @@ final class KnobControl: NSControl {
     }
 }
 
+/// Spectrum analyser: quantised bars with peak-hold caps that hang and then
+/// fall. The caps are the detail that makes it read as an analyser rather than
+/// a bar chart — they mark recent maxima and drop under gravity.
+final class SpectrumView: NSView {
+    override var isFlipped: Bool { true }
+
+    /// Band energies of the current sound, 0...1.
+    var bands: [Float] = [] {
+        didSet {
+            if levels.count != bands.count {
+                levels = [CGFloat](repeating: 0, count: bands.count)
+                peaks = [CGFloat](repeating: 0, count: bands.count)
+                peakAge = [CGFloat](repeating: 0, count: bands.count)
+            }
+        }
+    }
+    /// How hard the user is typing; scales the whole analyser.
+    var drive: CGFloat = 0
+
+    private var levels: [CGFloat] = []
+    private var peaks: [CGFloat] = []
+    private var peakAge: [CGFloat] = []
+    private var rng = SystemRandomNumberGenerator()
+
+    /// Advance one frame: bars chase their target, caps hang briefly then fall
+    /// with acceleration.
+    func step() {
+        guard !bands.isEmpty else { return }
+        for i in 0..<bands.count {
+            // A little per-band jitter so the bars don't move as one block.
+            let wobble = 1.0 + 0.22 * sin(MotionClock.shared.phase * (2.6 + CGFloat(i) * 0.31))
+            let target = CGFloat(bands[i]) * drive * wobble
+
+            // Fast attack, slow release — standard analyser ballistics.
+            if target > levels[i] {
+                levels[i] += (target - levels[i]) * 0.55
+            } else {
+                levels[i] += (target - levels[i]) * 0.16
+            }
+            levels[i] = min(1, max(0, levels[i]))
+
+            if levels[i] >= peaks[i] {
+                peaks[i] = levels[i]
+                peakAge[i] = 0
+            } else {
+                peakAge[i] += 1
+                // Hang for ~12 frames, then accelerate downward.
+                if peakAge[i] > 12 {
+                    peaks[i] -= 0.004 * (peakAge[i] - 12)
+                    peaks[i] = max(levels[i], peaks[i])
+                }
+            }
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !levels.isEmpty else { return }
+        let ink = Theme.current.displayInk
+        let n = levels.count
+        let gap: CGFloat = 2
+        let barW = (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n)
+        // Quantised into cells, the way a hardware analyser is built.
+        let rows = 12
+        let cellH = bounds.height / CGFloat(rows)
+
+        for i in 0..<n {
+            let x = CGFloat(i) * (barW + gap)
+            let lit = Int((levels[i] * CGFloat(rows)).rounded())
+
+            for r in 0..<rows {
+                let y = bounds.height - CGFloat(r + 1) * cellH
+                let cell = NSRect(x: x, y: y + 0.5, width: barW, height: cellH - 1)
+                if r < lit {
+                    // Brighter toward the top of each bar.
+                    let heat = 0.45 + 0.5 * CGFloat(r) / CGFloat(rows)
+                    ink.withAlphaComponent(heat).setFill()
+                } else {
+                    ink.withAlphaComponent(0.07).setFill()
+                }
+                NSBezierPath(roundedRect: cell, xRadius: 0.5, yRadius: 0.5).fill()
+            }
+
+            // Peak-hold cap.
+            let peakRow = min(rows - 1, Int((peaks[i] * CGFloat(rows)).rounded()))
+            if peakRow > 0 {
+                let y = bounds.height - CGFloat(peakRow + 1) * cellH
+                ink.withAlphaComponent(0.95).setFill()
+                NSRect(x: x, y: y + 0.5, width: barW, height: 1.5).fill()
+            }
+        }
+    }
+}
+
 /// Segmented LED level meter, used for volume. Reads like a hardware VU
 /// ladder: green through the working range, amber as it climbs, red at the
 /// top. Click or drag anywhere along it to set the level.
@@ -1086,7 +1180,15 @@ final class RoundButton: NSButton {
         Plastic.arc(center: NSPoint(x: rect.midX, y: rect.midY), radius: r - 0.5,
                  fromDeg: -150, toDeg: -30, color: NSColor(white: 1, alpha: 0.85), width: 1.6)
 
-        // 5. Label.
+        // 5. Glint on the gloss peak — drawn before the label so the spikes
+        // never cut across the text.
+        if !pressed {
+            Plastic.drawGlint(at: NSPoint(x: rect.minX + rect.width * 0.28,
+                                          y: rect.minY + rect.height * 0.17),
+                              length: r * 0.42, alpha: 0.38)
+        }
+
+        // 6. Label.
         let text = glyph.isEmpty ? title : glyph
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: glyph.isEmpty ? 10 : 15, weight: .bold),
@@ -1104,12 +1206,6 @@ final class RoundButton: NSButton {
         embossed.draw(at: NSPoint(x: c.x - size.width / 2,
                                   y: c.y - size.height / 2 + (pressed ? 1 : 0)))
 
-        // 6. Glint on the gloss peak.
-        if !pressed {
-            Plastic.drawGlint(at: NSPoint(x: rect.minX + rect.width * 0.30,
-                                          y: rect.minY + rect.height * 0.22),
-                              length: r * 0.55, alpha: 0.45)
-        }
     }
 
     override func mouseDown(with event: NSEvent) {

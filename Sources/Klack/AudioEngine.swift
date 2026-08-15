@@ -96,6 +96,7 @@ final class ClickAudioEngine {
         Self.builtInProfileNames.contains(name) ? profilesRoot.appendingPathComponent(name) : Self.customProfileDirectory(named: name)
     }
 
+    private var spectrumCache: [String: [Float]] = [:]
     private var downBuffers: [AVAudioPCMBuffer] = []
     private var upBuffers: [AVAudioPCMBuffer] = []
     private var spaceDownBuffer: AVAudioPCMBuffer?
@@ -338,6 +339,58 @@ final class ClickAudioEngine {
         } else if let b = upBuffers.randomElement() {
             play(b)
         }
+    }
+
+    // MARK: Analysis
+
+    /// Band energies of the current pack's sample, for the spectrum display.
+    ///
+    /// Uses Goertzel per band rather than a full FFT: we only need a handful of
+    /// band magnitudes, and Goertzel is O(n) per band with no transform setup
+    /// or power-of-two padding. Cached per pack, since the sample doesn't
+    /// change until the pack does.
+    func currentSpectrum(bands: Int = 20) -> [Float] {
+        if let cached = spectrumCache[currentProfile], cached.count == bands {
+            return cached
+        }
+        guard let buffer = downBuffers.first,
+              let data = buffer.floatChannelData?[0] else {
+            return [Float](repeating: 0, count: bands)
+        }
+        let frameCount = Int(buffer.frameLength)
+        guard frameCount > 64 else { return [Float](repeating: 0, count: bands) }
+
+        let sampleRate = Float(buffer.format.sampleRate)
+        // Logarithmic spacing from 80Hz up — matches how the ear divides the
+        // range, so bars spread out instead of bunching at the bottom.
+        let lowHz: Float = 80
+        let highHz = min(Float(12_000), sampleRate / 2 - 100)
+        var out = [Float](repeating: 0, count: bands)
+
+        for b in 0..<bands {
+            let t = Float(b) / Float(max(1, bands - 1))
+            let freq = lowHz * powf(highHz / lowHz, t)
+            let k = 2 * Float.pi * freq / sampleRate
+            let coeff = 2 * cosf(k)
+            var s1: Float = 0, s2: Float = 0
+            for i in 0..<frameCount {
+                let s0 = data[i] + coeff * s1 - s2
+                s2 = s1
+                s1 = s0
+            }
+            let power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+            let magnitude = sqrtf(max(0, power)) / Float(frameCount)
+            // Compress toward a decibel-ish curve so quiet bands stay visible.
+            out[b] = min(1, max(0, log10f(magnitude * 400 + 1) * 0.85))
+        }
+
+        // Normalise so every pack fills the display instead of some rendering
+        // as a flat line.
+        if let peak = out.max(), peak > 0.001 {
+            for i in 0..<out.count { out[i] = min(1, out[i] / peak) }
+        }
+        spectrumCache[currentProfile] = out
+        return out
     }
 
     // MARK: Live mixer support

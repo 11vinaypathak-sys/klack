@@ -20,7 +20,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     private var onClosed: (() -> Void)?
 
     private var display: BacklitDisplayView!
-    private var waveform: WaveformView!
+    private var spectrum: SpectrumView!
     private var volumeMeter: LevelMeterControl!
     private var volumeReadout: NSTextField!
     private var trimKnobs: [String: KnobControl] = [:]
@@ -108,7 +108,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         guard window?.isVisible == true else { return }
         // boost is 1.0 at normal speed, rising toward ~1.3 when typing fast.
         let intensity = min(1.0, max(0.2, (boost - 0.9) * 2.4))
-        waveform.pulse(intensity: intensity)
+        spectrum.drive = min(1.0, spectrum.drive + 0.30 + 0.30 * intensity)
 
         isBoosting = boost > 1.02
         lastWasSpace = isSpace
@@ -156,6 +156,10 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         MotionClock.shared.subscribe { [weak self] in
             guard let self, self.window?.isVisible == true else { return }
             self.display.needsDisplay = true
+            // Typing charges the analyser; it bleeds off every frame so the
+            // bars settle rather than staying pinned.
+            self.spectrum.drive *= 0.94
+            self.spectrum.step()
             for entry in self.lamps where entry.lamp.isLit {
                 entry.lamp.needsDisplay = true
             }
@@ -300,8 +304,11 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         bezel.addSubview(display)
 
         // Live activity trace, bottom-right — clear of the pack name.
-        waveform = WaveformView(frame: NSRect(x: 168, y: 108, width: 142, height: 36))
-        display.addSubview(waveform)
+        // Spectrum analyser across the lower display, showing the actual
+        // band content of the loaded sound pack.
+        spectrum = SpectrumView(frame: NSRect(x: 150, y: 96, width: 160, height: 46))
+        spectrum.bands = audioEngine?.currentSpectrum() ?? []
+        display.addSubview(spectrum)
     }
 
     private func buildControls(into plate: NSView) {
@@ -494,6 +501,8 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         }
         audioEngine?.playKeyDown(isSpace: false)
 
+        spectrum.bands = audioEngine?.currentSpectrum() ?? []
+
         // Each pack carries its own colour scheme, so picking a sound restyles
         // the whole panel — the instrument ends up looking like what it sounds
         // like.
@@ -591,9 +600,11 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         // Typing activity: bursts with gaps, so the trace looks like real use.
         let burst = sin(t * .pi * 14)
         if burst > -0.2 {
-            waveform.pulse(intensity: 0.3 + 0.65 * abs(sin(t * .pi * 22)))
+            spectrum.drive = 0.55 + 0.45 * abs(sin(t * .pi * 22))
+            spectrum.step()
         } else {
-            waveform.pulse(intensity: 0.02)
+            spectrum.drive *= 0.85
+            spectrum.step()
         }
 
         isBoosting = burst > 0.55
@@ -606,7 +617,8 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     func simulateActivityForRender() {
         for i in 0..<26 {
             let t = CGFloat(i) / 26
-            waveform.pulse(intensity: 0.25 + 0.7 * abs(sin(t * 7)))
+            spectrum.drive = 0.25 + 0.7 * abs(sin(t * 7))
+            spectrum.step()
         }
         display.backlightBoost = 0.1
         display.needsDisplay = true
