@@ -11,7 +11,8 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
 
     private var display: BacklitDisplayView!
     private var waveform: WaveformView!
-    private var volumeKnob: KnobControl!
+    private var volumeMeter: LevelMeterControl!
+    private var volumeReadout: NSTextField!
     private var trimKnobs: [String: KnobControl] = [:]
     private var lamps: [(name: String, lamp: LEDLamp, label: NSTextField)] = []
     private var mixerParams = SynthParams()
@@ -29,10 +30,11 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     private let plateOrigin = NSPoint(x: 80, y: 22)
     private let plateSize = NSSize(width: 400, height: 356)
 
-    /// The four params that live in the slide-out drawer; TONE and BODY stay
-    /// on the front panel as the two you reach for most.
+    /// Params that live in the slide-out drawer. TONE, BODY and BRIGHT sit on
+    /// the front panel, so they must not be repeated here — `trimKnobs` is
+    /// keyed by param, and a duplicate key would leave the two knobs for the
+    /// same parameter unable to stay in sync.
     private let drawerSpecs: [(key: String, label: String, min: Double, max: Double)] = [
-        ("brightness", "BRIGHT", 0, 1),
         ("snappiness", "SNAP", 0, 1),
         ("attack", "ATTACK", 0, 1),
         ("reverb", "REVERB", 0, 1),
@@ -94,6 +96,9 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         isBoosting = boost > 1.02
         lastWasSpace = isSpace
         display.backlightBoost = min(0.18, display.backlightBoost + 0.09)
+        // The meter twitches above the set level on each hit, like a real VU
+        // needle, then settles back.
+        volumeMeter.activityBoost = min(0.10, volumeMeter.activityBoost + 0.05 * intensity)
         refreshDisplay()
         startBacklightDecay()
     }
@@ -104,8 +109,10 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             guard let self else { t.invalidate(); return }
             self.display.backlightBoost *= 0.82
             self.display.needsDisplay = true
+            self.volumeMeter.activityBoost *= 0.78
             if self.display.backlightBoost < 0.005 {
                 self.display.backlightBoost = 0
+                self.volumeMeter.activityBoost = 0
                 self.display.needsDisplay = true
                 t.invalidate()
                 self.backlightDecay = nil
@@ -244,7 +251,9 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func buildControls(into plate: NSView) {
-        let preview = RoundButton(frame: NSRect(x: 70 - 32, y: 272 - 32, width: 64, height: 64))
+        let rowY: CGFloat = 252
+
+        let preview = RoundButton(frame: NSRect(x: 30, y: rowY - 32, width: 64, height: 64))
         preview.isBordered = false
         preview.title = ""
         preview.glyph = "▶"
@@ -252,7 +261,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         preview.action = #selector(previewMix)
         plate.addSubview(preview)
 
-        let save = RoundButton(frame: NSRect(x: 136 - 32, y: 272 - 32, width: 64, height: 64))
+        let save = RoundButton(frame: NSRect(x: 102, y: rowY - 32, width: 64, height: 64))
         save.isBordered = false
         save.title = "SAVE"
         save.isAccent = true
@@ -260,18 +269,35 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         save.action = #selector(saveMix)
         plate.addSubview(save)
 
-        addTrimKnob(key: "pitch", label: "TONE", center: NSPoint(x: 200, y: 264), into: plate,
+        // Trim knobs get more room now the big dial is gone.
+        addTrimKnob(key: "pitch", label: "TONE", center: NSPoint(x: 216, y: rowY), into: plate,
                     min: 400, max: 3200, value: Double(mixerParams.pitch))
-        addTrimKnob(key: "body", label: "BODY", center: NSPoint(x: 246, y: 264), into: plate,
+        addTrimKnob(key: "body", label: "BODY", center: NSPoint(x: 288, y: rowY), into: plate,
                     min: 0, max: 1, value: Double(mixerParams.body))
+        addTrimKnob(key: "brightness", label: "BRIGHT", center: NSPoint(x: 360, y: rowY), into: plate,
+                    min: 0, max: 1, value: Double(mixerParams.brightness))
 
-        volumeKnob = KnobControl(frame: NSRect(x: 312 - 54, y: 272 - 54, width: 108, height: 108))
-        volumeKnob.minValue = 0
-        volumeKnob.maxValue = 1
-        volumeKnob.value = Double(audioEngine?.volume ?? 0.8)
-        volumeKnob.target = self
-        volumeKnob.action = #selector(volumeChanged(_:))
-        plate.addSubview(volumeKnob)
+        // Volume as a full-width LED ladder along the bottom edge.
+        let volCaption = NSTextField(labelWithString: "VOLUME")
+        volCaption.font = .systemFont(ofSize: 8, weight: .bold)
+        volCaption.textColor = NSColor(srgbRed: 0.45, green: 0.47, blue: 0.52, alpha: 1)
+        volCaption.backgroundColor = .clear
+        volCaption.frame = NSRect(x: 30, y: 306, width: 70, height: 11)
+        plate.addSubview(volCaption)
+
+        volumeReadout = NSTextField(labelWithString: "80%")
+        volumeReadout.font = .monospacedSystemFont(ofSize: 9, weight: .bold)
+        volumeReadout.textColor = NSColor(srgbRed: 0.35, green: 0.37, blue: 0.42, alpha: 1)
+        volumeReadout.alignment = .right
+        volumeReadout.backgroundColor = .clear
+        volumeReadout.frame = NSRect(x: 300, y: 306, width: 70, height: 11)
+        plate.addSubview(volumeReadout)
+
+        volumeMeter = LevelMeterControl(frame: NSRect(x: 30, y: 320, width: 340, height: 22))
+        volumeMeter.value = Double(audioEngine?.volume ?? 0.8)
+        volumeMeter.target = self
+        volumeMeter.action = #selector(volumeChanged(_:))
+        plate.addSubview(volumeMeter)
     }
 
     private func buildDrawerContents() {
@@ -365,6 +391,10 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         display.bigValue = String(Int(volume * 100))
         display.packName = audioEngine.map { ClickAudioEngine.label(for: $0.currentProfile).uppercased() } ?? ""
         display.needsDisplay = true
+
+        // Keep the meter's own readout in sync no matter which path changed
+        // the volume — drag, render timeline, or programmatic.
+        volumeReadout.stringValue = "\(Int(volume * 100))%"
     }
 
     // MARK: Actions
@@ -382,8 +412,9 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         refreshDisplay()
     }
 
-    @objc private func volumeChanged(_ sender: KnobControl) {
+    @objc private func volumeChanged(_ sender: LevelMeterControl) {
         audioEngine?.volume = Float(sender.value)
+        volumeReadout.stringValue = "\(Int(sender.value * 100))%"
         refreshDisplay()
     }
 
@@ -441,8 +472,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         let eased = 0.5 - 0.5 * cos(t * .pi * 2)
         let vol = 0.22 + 0.72 * eased
         audioEngine?.volume = Float(vol)
-        volumeKnob.value = Double(vol)
-        volumeKnob.needsDisplay = true
+        volumeMeter.value = Double(vol)
 
         // Trim knobs drift at different rates so they don't move in lockstep.
         if let tone = trimKnobs["pitch"] {
@@ -494,7 +524,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         for (key, knob) in trimKnobs {
             knob.value = Double(value(for: key))
         }
-        volumeKnob.needsDisplay = true
+        volumeMeter.needsDisplay = true
         previewMix()
     }
 

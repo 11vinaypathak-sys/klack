@@ -83,11 +83,11 @@ final class ChassisView: NSView {
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
 
-        // Soft-touch grain, so the dark areas aren't dead flat.
+        // Soft-touch grain, so the dark areas aren't dead flat. Subtle enough
+        // to read as a moulded finish rather than noise.
         if let noise = Plastic.noiseTile, let ctx = NSGraphicsContext.current?.cgContext {
             ctx.saveGState()
-            ctx.setAlpha(0.5)
-            ctx.setBlendMode(.overlay)
+            ctx.setAlpha(0.14)
             ctx.draw(noise, in: NSRect(x: 0, y: 0, width: 64, height: 64), byTiling: true)
             ctx.restoreGState()
         }
@@ -268,10 +268,12 @@ final class BacklitDisplayView: NSView {
 
         drawContent()
 
-        // (iv) Grain.
+        // (iv) Grain. Kept very faint and composited normally — `.overlay`
+        // amplifies contrast against bright colours, which on amber turned
+        // this into visible static rather than a subtle phosphor texture.
         if let noise = Plastic.noiseTile, let ctx = NSGraphicsContext.current?.cgContext {
             ctx.saveGState()
-            ctx.setBlendMode(.overlay)
+            ctx.setAlpha(0.06)
             ctx.draw(noise, in: NSRect(x: 0, y: 0, width: 64, height: 64), byTiling: true)
             ctx.restoreGState()
         }
@@ -568,6 +570,102 @@ final class KnobControl: NSControl {
         value = min(maxValue, max(minValue, dragStartValue + delta))
         sendAction(action, to: target)
     }
+}
+
+/// Segmented LED level meter, used for volume. Reads like a hardware VU
+/// ladder: green through the working range, amber as it climbs, red at the
+/// top. Click or drag anywhere along it to set the level.
+final class LevelMeterControl: NSControl {
+    override var isFlipped: Bool { true }
+
+    var value: Double = 0.8 { didSet { needsDisplay = true } }
+    /// Momentary lift driven by keystrokes, so the meter twitches with typing.
+    var activityBoost: CGFloat = 0 { didSet { needsDisplay = true } }
+
+    private let segmentCount = 24
+    private let gap: CGFloat = 3
+
+    /// Colour ramp across the ladder — the last few segments run hot.
+    private func colorForSegment(_ i: Int) -> NSColor {
+        let f = CGFloat(i) / CGFloat(segmentCount - 1)
+        if f > 0.88 { return NSColor(srgbRed: 0.95, green: 0.26, blue: 0.20, alpha: 1) }
+        if f > 0.70 { return NSColor(srgbRed: 0.99, green: 0.72, blue: 0.15, alpha: 1) }
+        return NSColor(srgbRed: 0.42, green: 0.86, blue: 0.52, alpha: 1)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // Recessed channel the segments sit in.
+        let well = NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6)
+        NSColor(srgbRed: 0.13, green: 0.14, blue: 0.17, alpha: 1).setFill()
+        well.fill()
+
+        NSGraphicsContext.saveGraphicsState()
+        well.addClip()
+
+        let inset: CGFloat = 5
+        let usable = bounds.width - inset * 2
+        let segW = (usable - gap * CGFloat(segmentCount - 1)) / CGFloat(segmentCount)
+        let segH = bounds.height - inset * 2
+
+        let level = min(1.0, max(0.0, CGFloat(value) + activityBoost))
+        let litCount = Int((level * CGFloat(segmentCount)).rounded())
+
+        for i in 0..<segmentCount {
+            let x = inset + CGFloat(i) * (segW + gap)
+            let rect = NSRect(x: x, y: inset, width: segW, height: segH)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
+            let lit = i < litCount
+            let base = colorForSegment(i)
+
+            if lit {
+                // Glow behind the lit segment, then the segment itself.
+                NSGraphicsContext.saveGraphicsState()
+                let glow = NSShadow()
+                glow.shadowColor = base.withAlphaComponent(0.9)
+                glow.shadowOffset = .zero
+                glow.shadowBlurRadius = 6
+                glow.set()
+                base.setFill()
+                path.fill()
+                NSGraphicsContext.restoreGraphicsState()
+
+                // Bright core with a highlight along the top edge.
+                base.highlight(withLevel: 0.35)?.setFill()
+                path.fill()
+                NSColor(white: 1, alpha: 0.45).setFill()
+                NSBezierPath(roundedRect: NSRect(x: x, y: inset, width: segW, height: max(1, segH * 0.28)),
+                             xRadius: 1, yRadius: 1).fill()
+            } else {
+                // Unlit segments keep a trace of their colour, like a real LED
+                // that's off but still tinted.
+                base.withAlphaComponent(0.13).setFill()
+                path.fill()
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        Plastic.gradient([
+            (0, NSColor(white: 0, alpha: 0.55)),
+            (1, NSColor(white: 0, alpha: 0.0)),
+        ])?.draw(in: NSRect(x: 0, y: 0, width: bounds.width, height: 4), angle: -90)
+
+        NSColor(white: 1, alpha: 0.10).setStroke()
+        well.lineWidth = 1
+        well.stroke()
+    }
+
+    // MARK: Interaction — click or drag anywhere to set the level.
+
+    private func setValue(from event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        let inset: CGFloat = 5
+        let usable = max(1, bounds.width - inset * 2)
+        value = Double(min(1, max(0, (p.x - inset) / usable)))
+        sendAction(action, to: target)
+    }
+
+    override func mouseDown(with event: NSEvent) { setValue(from: event) }
+    override func mouseDragged(with event: NSEvent) { setValue(from: event) }
 }
 
 /// Circular glossy button.
