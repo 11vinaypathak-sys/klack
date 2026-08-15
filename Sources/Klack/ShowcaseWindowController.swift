@@ -1,5 +1,15 @@
 import Cocoa
 
+/// A borderless NSWindow returns false from `canBecomeKey`/`canBecomeMain` by
+/// default, so it can never take focus. Events then fall through unhandled to
+/// NSApp, which answers with the system alert beep — the "funk" sound you get
+/// when a keypress goes nowhere. Overriding both stops the beeping and lets
+/// the panel's controls behave normally.
+final class PanelWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 /// Klack's control panel — a dark chassis with a glossy white plastic plate,
 /// a backlit amber display, and machined rotary controls. Layout mirrors the
 /// Figma reference. The menu-bar dropdown remains the everyday interface;
@@ -50,7 +60,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         self.keyTap = keyTap
         self.onClosed = onClosed
 
-        let window = NSWindow(
+        let window = PanelWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
             styleMask: [.borderless],
             backing: .buffered,

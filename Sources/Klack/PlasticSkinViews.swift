@@ -3,6 +3,28 @@ import Cocoa
 // V2 skin: dark chassis + glossy white plastic plate + backlit amber display.
 // All views are `isFlipped` so coordinates match the Figma reference directly.
 
+extension NSBezierPath {
+    /// `NSBezierPath.cgPath` is macOS 14+, but Klack targets 12 — walk the
+    /// elements instead so the inner-shadow routine works everywhere.
+    var compatCGPath: CGPath {
+        let path = CGMutablePath()
+        var points = [NSPoint](repeating: .zero, count: 3)
+        for i in 0..<elementCount {
+            switch element(at: i, associatedPoints: &points) {
+            case .moveTo: path.move(to: points[0])
+            case .lineTo: path.addLine(to: points[0])
+            case .curveTo, .cubicCurveTo:
+                path.addCurve(to: points[2], control1: points[0], control2: points[1])
+            case .quadraticCurveTo:
+                path.addQuadCurve(to: points[1], control: points[0])
+            case .closePath: path.closeSubpath()
+            @unknown default: break
+            }
+        }
+        return path
+    }
+}
+
 /// A full colour scheme for the panel. Everything tinted — backlight, LEDs,
 /// accents, meter ramp, even the chassis temperature — comes from here, so
 /// switching themes restyles the whole instrument rather than recolouring
@@ -206,6 +228,44 @@ enum Plastic {
             (1.00, NSColor(white: 1, alpha: 0.22)),
         ])?.draw(in: r, angle: 0)
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// Core Graphics has no inner-shadow primitive. Clipping to the shape and
+    /// filling with `.sourceOut` inside a transparency layer puts the shadow of
+    /// the *inverted* shape inside the path, which is the standard trick.
+    static func innerShadow(in path: NSBezierPath, offset: NSSize, blur: CGFloat, alpha: CGFloat) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.addPath(path.compatCGPath)
+        ctx.clip()
+        ctx.setAlpha(alpha)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.setShadow(offset: offset, blur: blur, color: NSColor.black.cgColor)
+        ctx.setBlendMode(.sourceOut)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.addPath(path.compatCGPath)
+        ctx.fillPath()
+        ctx.endTransparencyLayer()
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
+    }
+
+    /// Arc sampled as points rather than `addArc`, so it doesn't depend on
+    /// flipped-context winding conventions. Degrees are clockwise from 12.
+    static func arc(center: NSPoint, radius: CGFloat, fromDeg: CGFloat, toDeg: CGFloat,
+                    color: NSColor, width: CGFloat) {
+        let path = NSBezierPath()
+        let steps = 48
+        for i in 0...steps {
+            let d = (fromDeg + (toDeg - fromDeg) * CGFloat(i) / CGFloat(steps)) * .pi / 180
+            let p = NSPoint(x: center.x + sin(d) * radius, y: center.y - cos(d) * radius)
+            if i == 0 { path.move(to: p) } else { path.line(to: p) }
+        }
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        color.setStroke()
+        path.stroke()
     }
 
     /// Anamorphic star glint — the era's punctuation mark on a gloss peak.
@@ -418,15 +478,6 @@ final class PlasticPlateView: NSView {
         ])?.draw(in: lip, angle: -90)
 
         NSGraphicsContext.restoreGraphicsState()
-
-        // Chrome trim rail across the lower plate — the mirrored horizon is
-        // what pulls the whole panel toward metal rather than plastic.
-        let rail = NSBezierPath(roundedRect: NSRect(x: 22, y: bounds.height - 74, width: bounds.width - 44, height: 7),
-                                xRadius: 3.5, yRadius: 3.5)
-        Plastic.drawChrome(in: rail)
-        NSColor(white: 0, alpha: 0.35).setStroke()
-        rail.lineWidth = 0.75
-        rail.stroke()
 
         // Moulded edges.
         let inner = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 29.5, yRadius: 29.5)
@@ -959,39 +1010,106 @@ final class RoundButton: NSButton {
     private var pressed = false
 
     override func draw(_ dirtyRect: NSRect) {
-        let r = min(bounds.width, bounds.height) / 2 - 4
+        let th = Theme.current
+        let outerR = min(bounds.width, bounds.height) / 2 - 1
         let c = NSPoint(x: bounds.midX, y: bounds.midY)
-        let rect = NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
+
+        // 1. Recessed socket the button sits down inside.
+        let socketRect = NSRect(x: c.x - outerR, y: c.y - outerR, width: outerR * 2, height: outerR * 2)
+        let socket = NSBezierPath(ovalIn: socketRect)
+        NSColor(srgbRed: 0.74, green: 0.75, blue: 0.78, alpha: 1).setFill()
+        socket.fill()
+        Plastic.innerShadow(in: socket, offset: NSSize(width: 0, height: 2), blur: 4, alpha: 0.45)
+
+        // 2. Chrome collar — the mirrored horizon reads as a machined bezel.
+        let collarR = outerR - 2
+        let collar = NSBezierPath(ovalIn: NSRect(x: c.x - collarR, y: c.y - collarR,
+                                                 width: collarR * 2, height: collarR * 2))
+        Plastic.drawChrome(in: collar)
+
+        // 3. The cap itself, domed and inset from the collar.
+        let r = collarR - 5
+        let rect = NSRect(x: c.x - r, y: c.y - r + (pressed ? 1 : 0), width: r * 2, height: r * 2)
         let path = NSBezierPath(ovalIn: rect)
+
+        // Cast shadow under the cap so it floats above the collar.
+        NSGraphicsContext.saveGraphicsState()
+        let drop = NSShadow()
+        drop.shadowColor = NSColor(white: 0, alpha: pressed ? 0.30 : 0.55)
+        drop.shadowOffset = NSSize(width: 0, height: pressed ? -1 : -3)
+        drop.shadowBlurRadius = pressed ? 3 : 7
+        drop.set()
+        NSColor.black.setFill()
+        path.fill()
+        NSGraphicsContext.restoreGraphicsState()
 
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
         if isAccent {
-            let th = Theme.current
             Plastic.gradient([
-                (0, th.accentTop), (0.5, th.accentMid), (1, th.accentBottom),
+                (0.00, th.accentTop.highlight(withLevel: 0.35) ?? th.accentTop),
+                (0.46, th.accentTop),
+                (0.50, th.accentMid),
+                (1.00, th.accentBottom),
             ])?.draw(in: rect, angle: pressed ? 90 : -90)
         } else {
             Plastic.gradient([
-                (0, NSColor(white: 1, alpha: 1)),
-                (0.5, NSColor(srgbRed: 0.97, green: 0.975, blue: 0.985, alpha: 1)),
-                (1, NSColor(srgbRed: 0.82, green: 0.835, blue: 0.86, alpha: 1)),
+                (0.00, NSColor(white: 1.0, alpha: 1)),
+                (0.46, NSColor(srgbRed: 0.965, green: 0.970, blue: 0.980, alpha: 1)),
+                (0.50, NSColor(srgbRed: 0.895, green: 0.905, blue: 0.925, alpha: 1)),
+                (1.00, NSColor(srgbRed: 0.78, green: 0.80, blue: 0.83, alpha: 1)),
             ])?.draw(in: rect, angle: pressed ? 90 : -90)
         }
+
+        // Broad specular across the top half, hard-terminated at the equator —
+        // the same trick that makes the plate read as lacquered.
+        let gloss = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * 0.52)
+        Plastic.gradient([
+            (0.00, NSColor(white: 1, alpha: pressed ? 0.30 : 0.62)),
+            (0.85, NSColor(white: 1, alpha: 0.06)),
+            (1.00, NSColor(white: 1, alpha: 0.0)),
+        ])?.draw(in: gloss, angle: -90)
+
+        // Warm bounce along the lower rim.
+        let bounce = NSRect(x: rect.minX, y: rect.maxY - rect.height * 0.22,
+                            width: rect.width, height: rect.height * 0.22)
+        Plastic.gradient([
+            (0, NSColor(white: 1, alpha: 0)),
+            (1, Plastic.bounceLight.withAlphaComponent(0.40)),
+        ])?.draw(in: bounce, angle: -90)
         NSGraphicsContext.restoreGraphicsState()
 
-        NSColor(white: 0, alpha: 0.22).setStroke()
-        path.lineWidth = 0.75
+        // 4. Rim: dark seat all round, bright catch-light along the top arc.
+        NSColor(white: 0, alpha: 0.30).setStroke()
+        path.lineWidth = 1
         path.stroke()
+        Plastic.arc(center: NSPoint(x: rect.midX, y: rect.midY), radius: r - 0.5,
+                 fromDeg: -150, toDeg: -30, color: NSColor(white: 1, alpha: 0.85), width: 1.6)
 
+        // 5. Label.
         let text = glyph.isEmpty ? title : glyph
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: glyph.isEmpty ? 10 : 15, weight: .bold),
-            .foregroundColor: isAccent ? NSColor.white : NSColor(srgbRed: 0.28, green: 0.30, blue: 0.35, alpha: 1),
+            .foregroundColor: isAccent ? NSColor.white : NSColor(srgbRed: 0.26, green: 0.28, blue: 0.33, alpha: 1),
+            .kern: glyph.isEmpty ? 0.6 : 0.0,
         ]
         let s = NSAttributedString(string: text, attributes: attrs)
         let size = s.size()
-        s.draw(at: NSPoint(x: c.x - size.width / 2, y: c.y - size.height / 2))
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(white: isAccent ? 0 : 1, alpha: 0.5)
+        shadow.shadowOffset = NSSize(width: 0, height: isAccent ? -1 : 1)
+        shadow.shadowBlurRadius = 1
+        let embossed = NSMutableAttributedString(attributedString: s)
+        embossed.addAttribute(.shadow, value: shadow, range: NSRange(location: 0, length: embossed.length))
+        embossed.draw(at: NSPoint(x: c.x - size.width / 2,
+                                  y: c.y - size.height / 2 + (pressed ? 1 : 0)))
+
+        // 6. Glint on the gloss peak.
+        if !pressed {
+            Plastic.drawGlint(at: NSPoint(x: rect.minX + rect.width * 0.30,
+                                          y: rect.minY + rect.height * 0.22),
+                              length: r * 0.55, alpha: 0.45)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
