@@ -7,6 +7,10 @@ each key down and key up. It ships with a set of recorded and procedurally-synth
 packs, a live synthesis mixer for designing your own click, and an import pipeline for turning
 a recording of your actual keyboard into a playable pack.
 
+![Klack control panel](docs/images/demo.gif)
+
+*The panel responding to live typing — the waveform, backlight, and status flags are driven by real keystrokes. ([higher-quality MP4](docs/images/demo.mp4))*
+
 ![Klack control panel](docs/images/panel.png)
 
 The mixer drawer, opened from the MIXER tab:

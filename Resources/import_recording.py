@@ -18,44 +18,84 @@ material is always the real recording, this just avoids literal repeats.
 import argparse
 import os
 import random
+import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import wave
 
 SR = 44100
 WINDOW_MS = 90    # length of each extracted keystroke segment
 MIN_GAP_MS = 120  # minimum spacing between detected onsets (debounce)
+# Below this peak the "recording" is effectively silence -- normalizing it
+# would just amplify the noise floor by thousands of times into loud hiss.
+SILENCE_PEAK = 0.005
+# A usable keystroke needs enough material to be recognisable; anything much
+# shorter than this is a truncated recording, not a click.
+MIN_SEGMENT_MS = 20
+# Only the loudest handful of hits are ever used, so there's no reason to keep
+# (or extract) thousands of segments from a long recording.
+MAX_SEGMENTS = 64
+
+
+class ImportError_(Exception):
+    """User-facing failure: reported as a clean message, not a traceback."""
 
 
 def convert_to_wav(input_path, tmp_dir):
+    if not os.path.isfile(input_path):
+        raise ImportError_(f"input file not found: {input_path}")
     base = os.path.splitext(os.path.basename(input_path))[0]
     out_path = os.path.join(tmp_dir, f"{base}_conv.wav")
-    subprocess.run(
+    proc = subprocess.run(
         ["afconvert", "-f", "WAVE", "-d", "LEI16@44100", "-c", "1", input_path, out_path],
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    # afconvert reports the actual reason (unsupported codec, unreadable file)
+    # on stderr -- surfacing it beats a bare CalledProcessError traceback.
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip() or f"exit status {proc.returncode}"
+        raise ImportError_(f"could not decode {input_path}: {detail}")
+    if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+        raise ImportError_(f"afconvert produced no audio for {input_path}")
     return out_path
 
 
 def read_wav_samples(path):
     with wave.open(path, "rb") as f:
-        assert f.getframerate() == SR, f"expected {SR}Hz, got {f.getframerate()}"
-        assert f.getsampwidth() == 2, "expected 16-bit PCM"
+        # afconvert is asked for 44.1k mono 16-bit, so anything else means the
+        # conversion silently didn't do what we asked -- fail loudly instead of
+        # misreading the frames as if they were mono.
+        if f.getframerate() != SR:
+            raise ImportError_(f"expected {SR}Hz after conversion, got {f.getframerate()}")
+        if f.getsampwidth() != 2:
+            raise ImportError_(f"expected 16-bit PCM after conversion, got {f.getsampwidth() * 8}-bit")
+        if f.getnchannels() != 1:
+            raise ImportError_(f"expected mono after conversion, got {f.getnchannels()} channels")
         n = f.getnframes()
         raw = f.readframes(n)
     count = len(raw) // 2
+    if count == 0:
+        raise ImportError_(f"no audio frames in {os.path.basename(path)}")
     samples = struct.unpack(f"<{count}h", raw)
     return [s / 32768.0 for s in samples]
 
 
 def write_wav_samples(path, samples):
+    # An empty WAV loads "successfully" in Klack and then plays nothing, so
+    # never let one reach disk in the first place.
+    if not samples:
+        raise ImportError_(f"refusing to write empty audio to {os.path.basename(path)}")
     with wave.open(path, "w") as f:
         f.setnchannels(1)
         f.setsampwidth(2)
         f.setframerate(SR)
         frames = b"".join(struct.pack("<h", int(max(-1.0, min(1.0, s)) * 32767)) for s in samples)
         f.writeframes(frames)
+    if os.path.getsize(path) == 0:
+        raise ImportError_(f"wrote a zero-byte file at {path}")
 
 
 def detect_onsets(samples):
@@ -91,11 +131,20 @@ def extract_segments(samples, onsets):
     window_samples = int(SR * WINDOW_MS / 1000)
     pre_roll = int(SR * 0.003)
     fade_samples = int(SR * 0.008)
+    min_samples = int(SR * MIN_SEGMENT_MS / 1000)
     segments = []
     for onset in onsets:
         start = max(0, onset - pre_roll)
         end = min(len(samples), start + window_samples)
         seg = list(samples[start:end])
+        # A hit right at the end of the recording gets truncated; too-short
+        # stubs click unpleasantly, so drop rather than ship them.
+        if len(seg) < min_samples:
+            continue
+        # An onset found purely in the noise floor isn't a keystroke, and
+        # normalizing it later would amplify hiss to full scale.
+        if max((abs(s) for s in seg), default=0.0) < SILENCE_PEAK:
+            continue
         for i in range(min(fade_samples, len(seg))):
             seg[-(i + 1)] *= i / fade_samples
         segments.append(seg)
@@ -104,6 +153,12 @@ def extract_segments(samples, onsets):
 
 def resample(samples, rate):
     """Linear-interpolation resample for pitch/speed jitter."""
+    # rate is a speed multiplier; zero/negative would divide by zero or
+    # walk backwards off the front of the buffer.
+    if rate <= 0:
+        raise ValueError(f"resample rate must be positive, got {rate}")
+    if not samples:
+        return []
     n_out = max(1, int(len(samples) / rate))
     out = [0.0] * n_out
     for i in range(n_out):
@@ -119,6 +174,10 @@ def resample(samples, rate):
 
 def normalize(samples, target=0.85):
     peak = max((abs(s) for s in samples), default=1.0) or 1.0
+    # Scaling a silent/near-silent segment up to `target` turns the noise
+    # floor into full-volume hiss -- leave it alone and let the caller reject it.
+    if peak < SILENCE_PEAK:
+        return list(samples)
     return [s * (target / peak) for s in samples]
 
 
@@ -131,58 +190,89 @@ def main():
 
     out_root = args.out_root or os.path.expanduser("~/Library/Application Support/Klack/CustomProfiles")
     out_dir = os.path.join(out_root, args.name)
-    os.makedirs(out_dir, exist_ok=True)
 
-    tmp_dir = "/tmp/klack_import"
-    os.makedirs(tmp_dir, exist_ok=True)
+    # Work in a private temp dir: a fixed /tmp path is world-writable and can
+    # already exist owned by another user, which makes afconvert fail.
+    tmp_dir = tempfile.mkdtemp(prefix="klack_import_")
 
-    all_segments = []
-    for input_path in args.inputs:
-        wav_path = convert_to_wav(input_path, tmp_dir)
-        samples = read_wav_samples(wav_path)
-        onsets = detect_onsets(samples)
-        if not onsets:
-            print(f"WARNING: no onsets detected in {input_path}, treating whole file as one hit")
-            onsets = [0]
-        segs = extract_segments(samples, onsets)
-        print(f"{input_path}: found {len(segs)} keystroke segment(s)")
-        all_segments.extend(segs)
+    try:
+        all_segments = []
+        for input_path in args.inputs:
+            wav_path = convert_to_wav(input_path, tmp_dir)
+            samples = read_wav_samples(wav_path)
 
-    if not all_segments:
-        print("ERROR: no usable audio segments found in any input file.")
-        sys.exit(1)
+            peak = max((abs(s) for s in samples), default=0.0)
+            if peak < SILENCE_PEAK:
+                print(f"WARNING: {input_path} is silent (peak {peak:.5f}), skipping")
+                continue
 
-    def variant(base_seg, rate_jitter=1.0, gain=1.0):
-        s = resample(base_seg, rate_jitter) if abs(rate_jitter - 1.0) > 0.001 else list(base_seg)
-        s = [x * gain for x in s]
-        return normalize(s)
+            onsets = detect_onsets(samples)
+            if not onsets:
+                print(f"WARNING: no onsets detected in {input_path}, treating whole file as one hit")
+                onsets = [0]
+            segs = extract_segments(samples, onsets)
+            if not segs:
+                print(f"WARNING: no usable keystrokes in {input_path} "
+                      f"(too short or too quiet), skipping")
+                continue
+            print(f"{input_path}: found {len(segs)} keystroke segment(s)")
+            all_segments.extend(segs)
 
-    needed_down, needed_up = 6, 3
+        if not all_segments:
+            raise ImportError_(
+                "no usable audio segments found. Check that the recording "
+                "actually contains audible keystrokes and is longer than "
+                f"{MIN_SEGMENT_MS}ms."
+            )
 
-    down_variants = []
-    for i in range(needed_down):
-        base = all_segments[i % len(all_segments)]
-        jitter = 1.0 if len(all_segments) >= needed_down else random.uniform(0.95, 1.06)
-        down_variants.append(variant(base, rate_jitter=jitter))
+        # A long recording can yield thousands of hits but only a handful are
+        # ever used -- keep the loudest, which are the cleanest keystrokes.
+        if len(all_segments) > MAX_SEGMENTS:
+            all_segments.sort(key=lambda s: max(abs(x) for x in s), reverse=True)
+            print(f"Using the {MAX_SEGMENTS} loudest of {len(all_segments)} detected segments")
+            all_segments = all_segments[:MAX_SEGMENTS]
 
-    up_variants = []
-    for i in range(needed_up):
-        base = all_segments[i % len(all_segments)]
-        up_variants.append(variant(base, rate_jitter=random.uniform(1.08, 1.2), gain=0.6))
+        # Only create the profile folder once there's real audio to put in it,
+        # so a failed import can't leave a half-written pack behind.
+        os.makedirs(out_dir, exist_ok=True)
 
-    space_down = variant(all_segments[0], rate_jitter=0.85, gain=1.0)
-    space_up = variant(all_segments[0], rate_jitter=1.0, gain=0.5)
+        def variant(base_seg, rate_jitter=1.0, gain=1.0):
+            s = resample(base_seg, rate_jitter) if abs(rate_jitter - 1.0) > 0.001 else list(base_seg)
+            s = [x * gain for x in s]
+            return normalize(s)
 
-    for i, seg in enumerate(down_variants, start=1):
-        write_wav_samples(os.path.join(out_dir, f"click_down_{i}.wav"), seg)
-    for i, seg in enumerate(up_variants, start=1):
-        write_wav_samples(os.path.join(out_dir, f"click_up_{i}.wav"), seg)
-    write_wav_samples(os.path.join(out_dir, "click_space_down.wav"), space_down)
-    write_wav_samples(os.path.join(out_dir, "click_space_up.wav"), space_up)
+        needed_down, needed_up = 6, 3
 
-    print(f"Wrote profile '{args.name}' to {out_dir}")
-    print("Select it from Klack's menu bar dropdown under Sound Pack.")
+        down_variants = []
+        for i in range(needed_down):
+            base = all_segments[i % len(all_segments)]
+            jitter = 1.0 if len(all_segments) >= needed_down else random.uniform(0.95, 1.06)
+            down_variants.append(variant(base, rate_jitter=jitter))
+
+        up_variants = []
+        for i in range(needed_up):
+            base = all_segments[i % len(all_segments)]
+            up_variants.append(variant(base, rate_jitter=random.uniform(1.08, 1.2), gain=0.6))
+
+        space_down = variant(all_segments[0], rate_jitter=0.85, gain=1.0)
+        space_up = variant(all_segments[0], rate_jitter=1.0, gain=0.5)
+
+        for i, seg in enumerate(down_variants, start=1):
+            write_wav_samples(os.path.join(out_dir, f"click_down_{i}.wav"), seg)
+        for i, seg in enumerate(up_variants, start=1):
+            write_wav_samples(os.path.join(out_dir, f"click_up_{i}.wav"), seg)
+        write_wav_samples(os.path.join(out_dir, "click_space_down.wav"), space_down)
+        write_wav_samples(os.path.join(out_dir, "click_space_up.wav"), space_up)
+
+        print(f"Wrote profile '{args.name}' to {out_dir}")
+        print("Select it from Klack's menu bar dropdown under Sound Pack.")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ImportError_ as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)

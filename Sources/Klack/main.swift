@@ -57,15 +57,35 @@ if let outPath = ProcessInfo.processInfo.environment["KLACK_RENDER_TEST"] {
     if ProcessInfo.processInfo.environment["KLACK_RENDER_MIXER"] != nil {
         controller.openMixerForRender()
     }
-    controller.simulateActivityForRender()
 
     guard let view = controller.window?.contentView else { exit(1) }
     view.layoutSubtreeIfNeeded()
 
-    guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
-    view.cacheDisplay(in: view.bounds, to: rep)
-    guard let data = rep.representation(using: .png, properties: [:]) else { exit(1) }
-    try? data.write(to: URL(fileURLWithPath: outPath))
+    func snapshot(to url: URL) {
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let data = rep.representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: url)
+    }
+
+    // Frame-sequence mode: write a numbered PNG per frame so the panel can be
+    // turned into a video without any screen recording.
+    if let frameCountText = ProcessInfo.processInfo.environment["KLACK_RENDER_FRAMES"],
+       let frameCount = Int(frameCountText), frameCount > 0 {
+        let dir = URL(fileURLWithPath: outPath)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for f in 0..<frameCount {
+            let t = CGFloat(f) / CGFloat(frameCount)
+            controller.setRenderState(progress: t)
+            view.displayIfNeeded()
+            snapshot(to: dir.appendingPathComponent(String(format: "frame_%04d.png", f)))
+        }
+        print("rendered \(frameCount) frames -> \(outPath)")
+        exit(0)
+    }
+
+    controller.simulateActivityForRender()
+    snapshot(to: URL(fileURLWithPath: outPath))
     print("rendered \(Int(view.bounds.width))x\(Int(view.bounds.height)) -> \(outPath)")
     exit(0)
 }

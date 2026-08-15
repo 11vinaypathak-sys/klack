@@ -72,6 +72,9 @@ final class ClickAudioEngine {
     private let poolSize = 24
     private let profilesRoot: URL
     private var format: AVAudioFormat?
+    // Held so the graph can be rewired after an output-device change.
+    private var limiterNode: AVAudioUnitEffect?
+    private var configChangeObserver: NSObjectProtocol?
 
     private(set) var currentProfile: String = "real_clicky"
 
@@ -146,6 +149,7 @@ final class ClickAudioEngine {
             componentFlags: 0, componentFlagsMask: 0
         )
         let limiter = AVAudioUnitEffect(audioComponentDescription: limiterDescription)
+        limiterNode = limiter
         engine.attach(limiter)
         engine.connect(engine.mainMixerNode, to: limiter, format: fmt)
         engine.connect(limiter, to: engine.outputNode, format: fmt)
@@ -157,6 +161,60 @@ final class ClickAudioEngine {
         } catch {
             NSLog("Klack: failed to start audio engine: \(error)")
             return nil
+        }
+
+        // Switching output device (headphones in/out, sleep-wake, a display
+        // with speakers connecting) tears down the engine's connections and
+        // stops it. Without handling this the app goes permanently silent
+        // until relaunch.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    deinit {
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// The output format can change with the device (e.g. 44.1k -> 48k), so
+    /// rewire the whole graph to the new hardware format before restarting.
+    private func handleConfigurationChange() {
+        let outputFormat = engine.outputNode.outputFormat(forBus: 0)
+        // A zero-rate format means the device isn't ready yet; the next
+        // notification (or the restart-on-play path) will pick it up.
+        guard outputFormat.sampleRate > 0, let bufferFormat = format, let limiter = limiterNode else {
+            NSLog("Klack: configuration change with no usable output format yet")
+            return
+        }
+
+        // Reconnecting the mixer/limiter is what actually re-establishes the
+        // broken links to the new device.
+        engine.connect(engine.mainMixerNode, to: limiter, format: bufferFormat)
+        engine.connect(limiter, to: engine.outputNode, format: outputFormat)
+        for node in pool {
+            engine.connect(node, to: engine.mainMixerNode, format: bufferFormat)
+        }
+        engine.mainMixerNode.outputVolume = volume
+        restartIfNeeded()
+    }
+
+    /// Engine can also be stopped by the system (sleep/wake, device loss), so
+    /// every play path checks this rather than scheduling into a dead graph.
+    @discardableResult
+    private func restartIfNeeded() -> Bool {
+        guard !engine.isRunning else { return true }
+        do {
+            try engine.start()
+            return true
+        } catch {
+            NSLog("Klack: failed to restart audio engine: \(error)")
+            return false
         }
     }
 
@@ -253,8 +311,13 @@ final class ClickAudioEngine {
     }
 
     private func play(_ buffer: AVAudioPCMBuffer, gain: Float = 1.0) {
+        // Scheduling into a stopped engine is silently dropped, so recover
+        // first -- this covers the sleep/wake and device-loss cases.
+        guard buffer.frameLength > 0, restartIfNeeded() else { return }
         let node = nextNode()
-        node.volume = max(0.0, min(2.0, gain))
+        // NaN fails every comparison, so min/max would let it through as the
+        // upper bound (full blast); reject it explicitly.
+        node.volume = gain.isFinite ? max(0.0, min(2.0, gain)) : 1.0
         node.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
         node.play()
     }
@@ -282,7 +345,9 @@ final class ClickAudioEngine {
     /// Renders raw samples straight into the player pool for instant preview
     /// while dragging a mixer slider — no disk round-trip.
     func previewSamples(_ samples: [Float]) {
-        guard let fmt = format,
+        // A zero-capacity buffer is created successfully rather than returning
+        // nil, so the empty case has to be rejected before that.
+        guard !samples.isEmpty, let fmt = format,
               let buffer = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(samples.count)) else { return }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         if let channelData = buffer.floatChannelData {
@@ -304,6 +369,10 @@ final class ClickAudioEngine {
 
             func write(_ samples: [Float], to name: String) throws {
                 let url = dir.appendingPathComponent(name)
+                // An empty file would load fine and then play silence.
+                guard !samples.isEmpty else {
+                    throw NSError(domain: "Klack", code: 2, userInfo: [NSLocalizedDescriptionKey: "Refusing to write empty sample \(name)"])
+                }
                 guard let buffer = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(samples.count)) else { return }
                 buffer.frameLength = AVAudioFrameCount(samples.count)
                 if let channelData = buffer.floatChannelData {

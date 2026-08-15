@@ -433,6 +433,52 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Drive every animated element to a given point on a normalised 0...1
+    /// timeline, so a frame sequence can be rendered deterministically without
+    /// screen capture.
+    func setRenderState(progress t: CGFloat) {
+        // Volume sweeps up and back, eased so the knob doesn't snap.
+        let eased = 0.5 - 0.5 * cos(t * .pi * 2)
+        let vol = 0.22 + 0.72 * eased
+        audioEngine?.volume = Float(vol)
+        volumeKnob.value = Double(vol)
+        volumeKnob.needsDisplay = true
+
+        // Trim knobs drift at different rates so they don't move in lockstep.
+        if let tone = trimKnobs["pitch"] {
+            tone.value = 400 + 2800 * Double(0.5 - 0.5 * cos(t * .pi * 4))
+            tone.needsDisplay = true
+        }
+        if let body = trimKnobs["body"] {
+            body.value = Double(0.5 + 0.45 * sin(t * .pi * 6))
+            body.needsDisplay = true
+        }
+
+        // Cycle the active pack across the timeline.
+        let packIndex = min(lamps.count - 1, Int(t * CGFloat(max(1, lamps.count))))
+        if packIndex >= 0 && packIndex < lamps.count {
+            for (i, entry) in lamps.enumerated() {
+                entry.lamp.isLit = (i == packIndex)
+                entry.lamp.needsDisplay = true
+                entry.label.textColor = NSColor(white: 1, alpha: i == packIndex ? 0.85 : 0.35)
+            }
+            display.packName = ClickAudioEngine.label(for: lamps[packIndex].name).uppercased()
+        }
+
+        // Typing activity: bursts with gaps, so the trace looks like real use.
+        let burst = sin(t * .pi * 14)
+        if burst > -0.2 {
+            waveform.pulse(intensity: 0.3 + 0.65 * abs(sin(t * .pi * 22)))
+        } else {
+            waveform.pulse(intensity: 0.02)
+        }
+
+        isBoosting = burst > 0.55
+        lastWasSpace = sin(t * .pi * 9) > 0.85
+        display.backlightBoost = burst > -0.2 ? 0.09 * CGFloat(abs(burst)) : 0
+        refreshDisplay()
+    }
+
     /// Populate the waveform so a static render shows the trace populated.
     func simulateActivityForRender() {
         for i in 0..<26 {

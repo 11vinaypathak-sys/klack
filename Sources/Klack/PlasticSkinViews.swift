@@ -317,10 +317,13 @@ final class BacklitDisplayView: NSView {
         // Seven-segment readout. Drawing "888" faintly behind the live value
         // shows the unlit segments a real LCD has — the single biggest cue
         // that separates a segment display from ordinary bold text.
+        // Kept faint deliberately: on a real LCD the unlit segments are barely
+        // there. Too much alpha and a leading ghost digit reads as part of the
+        // number — "83" starts looking like "883".
         let segFont = Plastic.segmentFont(size: 34)
         NSAttributedString(string: "888", attributes: [
             .font: segFont,
-            .foregroundColor: ink.withAlphaComponent(0.13),
+            .foregroundColor: ink.withAlphaComponent(0.06),
         ]).draw(at: NSPoint(x: 216, y: 44))
 
         let padded = String(repeating: " ", count: max(0, 3 - bigValue.count)) + bigValue

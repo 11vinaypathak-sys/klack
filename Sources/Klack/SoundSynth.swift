@@ -23,19 +23,34 @@ enum SoundSynth {
 
     static func render(params: SynthParams, durationMs: Float, seed: Int) -> [Float] {
         var rng = SeededGenerator(seed: seed)
-        let n = Int(sampleRate * Double(durationMs) / 1000)
+        // A zero/negative/NaN duration would make an empty buffer, which
+        // scheduleBuffer rejects at runtime -- always render something.
+        let safeDurationMs = durationMs.isFinite ? max(1, durationMs) : 1
+        let n = Int(sampleRate * Double(safeDurationMs) / 1000)
         var out = [Float](repeating: 0, count: n)
 
+        // Callers jitter these (and sliders can be driven to their ends), so
+        // clamp into the ranges the maths below is actually valid over rather
+        // than trusting the incoming values.
+        let pitch = params.pitch.isFinite ? min(20000, max(20, params.pitch)) : 1650
+        let body = params.body.isFinite ? min(1, max(0, params.body)) : 0
+        let brightness = params.brightness.isFinite ? min(1, max(0, params.brightness)) : 0
+        let snappiness = params.snappiness.isFinite ? min(1, max(0, params.snappiness)) : 0
+        let attack = params.attack.isFinite ? min(1, max(0, params.attack)) : 0
+        let reverb = params.reverb.isFinite ? min(1, max(0, params.reverb)) : 0
+
         // Decay multiplier: snappiness 0 -> 1.8x longer, 1 -> 0.5x shorter.
-        let decayScale = 1.8 - Float(1.3) * params.snappiness
+        // Clamped snappiness keeps this >= 0.5, so the -t/decay divisions below
+        // can never hit zero (which would yield NaN at t = 0).
+        let decayScale = 1.8 - Float(1.3) * snappiness
 
         // 1. Impact transient -- two overlapping noise bursts (a fast micro-
         //    burst plus a slightly coarser one) instead of one clean burst.
         //    A single uniform noise decay reads as a synthetic "pop"; layering
         //    two different grain/decay rates gives it a more textured, less
         //    obviously-generated knock.
-        let noiseBurstMs: Float = 2.0 + 1.5 * params.attack
-        let noiseDecayMs: Float = 1.2 + 0.8 * params.attack
+        let noiseBurstMs: Float = 2.0 + 1.5 * attack
+        let noiseDecayMs: Float = 1.2 + 0.8 * attack
         for i in 0..<n {
             let tMs = Float(i) * 1000 / Float(sampleRate)
             if tMs >= noiseBurstMs { break }
@@ -43,7 +58,7 @@ enum SoundSynth {
             let env2 = expf(-tMs / (noiseDecayMs * 2.4))
             let grain = rng.nextUniform(-1, 1)
             let coarse = rng.nextUniform(-1, 1)
-            out[i] += (grain * env * 0.7 + coarse * env2 * 0.3) * (0.25 + 0.45 * params.attack)
+            out[i] += (grain * env * 0.7 + coarse * env2 * 0.3) * (0.25 + 0.45 * attack)
         }
 
         // 1b. A second, quieter impulse a couple ms later -- real switches
@@ -56,7 +71,7 @@ enum SoundSynth {
             let tMs = Float(j) * 1000 / Float(sampleRate)
             if tMs >= noiseBurstMs * 0.8 { break }
             let env = expf(-tMs / (noiseDecayMs * 0.8))
-            out[i] += rng.nextUniform(-1, 1) * env * (0.10 + 0.15 * params.attack)
+            out[i] += rng.nextUniform(-1, 1) * env * (0.10 + 0.15 * attack)
         }
 
         // 2. Resonant modes -- decaying sinusoids at inharmonic ratios, each
@@ -64,7 +79,7 @@ enum SoundSynth {
         //    riding along (real resonances aren't infinitely pure tones).
         for (ratio, (decayMs, amp)) in zip(modeRatios, zip(baseModeDecaysMs, baseModeAmps)) {
             let detune = rng.nextUniform(0.985, 1.015)
-            let freq = params.pitch * ratio * detune
+            let freq = pitch * ratio * detune
             let phase = rng.nextUniform(0, 2 * .pi)
             let decay = decayMs * decayScale
             var prevNoise: Float = 0
@@ -77,18 +92,18 @@ enum SoundSynth {
                 let rawNoise = rng.nextUniform(-1, 1)
                 prevNoise = prevNoise * 0.85 + rawNoise * 0.15
                 let textured = tone * 0.88 + prevNoise * 0.12
-                out[i] += textured * env * amp * params.brightness
+                out[i] += textured * env * amp * brightness
             }
         }
 
         // 3. Low body/thump resonance.
-        let thumpFreq = 90 + 0.06 * params.pitch // slightly track pitch so it stays coherent
-        let thumpDecay: Float = (20 + 10 * params.brightness) * decayScale
+        let thumpFreq = 90 + 0.06 * pitch // slightly track pitch so it stays coherent
+        let thumpDecay: Float = (20 + 10 * brightness) * decayScale
         let thumpPhase = rng.nextUniform(0, 2 * .pi)
         for i in 0..<n {
             let tMs = Float(i) * 1000 / Float(sampleRate)
             let env = expf(-tMs / thumpDecay)
-            out[i] += sinf(2 * .pi * thumpFreq * Float(i) / Float(sampleRate) + thumpPhase) * env * params.body
+            out[i] += sinf(2 * .pi * thumpFreq * Float(i) / Float(sampleRate) + thumpPhase) * env * body
         }
 
         // Near-instant attack ramp to avoid a digital pop at sample 0.
@@ -97,18 +112,20 @@ enum SoundSynth {
             out[i] *= Float(i) / Float(attackSamples)
         }
 
-        if params.reverb > 0.001 {
-            let wet = applyReverb(out, roomDecay: 0.5 + 0.15 * params.reverb)
+        if reverb > 0.001 {
+            let wet = applyReverb(out, roomDecay: 0.5 + 0.15 * reverb)
             for i in 0..<out.count {
-                out[i] = out[i] * (1 - params.reverb * 0.5) + wet[i] * (params.reverb * 0.5)
+                out[i] = out[i] * (1 - reverb * 0.5) + wet[i] * (reverb * 0.5)
             }
         }
 
         // Gentle soft-clip saturation -- adds a bit of the odd-harmonic
         // "grit" real audio picks up going through actual mechanics/air,
         // instead of the perfectly clean sum of ideal sine waves.
+        // Also the last line of defence against a non-finite sample: one NaN
+        // reaching the render thread poisons the mix and can silence the graph.
         for i in 0..<out.count {
-            out[i] = softClip(out[i] * 1.4)
+            out[i] = out[i].isFinite ? softClip(out[i] * 1.4) : 0
         }
 
         normalize(&out, target: 0.85)
@@ -121,7 +138,8 @@ enum SoundSynth {
 
     private static func normalize(_ signal: inout [Float], target: Float) {
         let peak = signal.map { abs($0) }.max() ?? 1
-        guard peak > 0.0001 else { return }
+        // `peak > x` is false for NaN, so this also covers a poisoned buffer.
+        guard peak.isFinite, peak > 0.0001 else { return }
         let scale = target / peak
         for i in 0..<signal.count { signal[i] *= scale }
     }
