@@ -1,5 +1,48 @@
 import Cocoa
 
+// Benchmark mode: times the synthesis path so the performance claims in the
+// docs are measured rather than asserted.
+if ProcessInfo.processInfo.environment["KLACK_BENCH"] != nil {
+    func measure(_ label: String, _ iterations: Int, _ body: () -> Void) {
+        body() // warm up
+        let start = CFAbsoluteTimeGetCurrent()
+        for _ in 0..<iterations { body() }
+        let total = CFAbsoluteTimeGetCurrent() - start
+        let perMs = total / Double(iterations) * 1000
+        let padded = label.padding(toLength: 40, withPad: " ", startingAt: 0)
+        print("\(padded) \(String(format: "%7.3f", perMs)) ms/call  (\(iterations) runs)")
+    }
+
+    var defaults = SynthParams()
+    measure("render 70ms, default params", 200) {
+        _ = SoundSynth.render(params: defaults, durationMs: 70, seed: 1)
+    }
+
+    // Worst case: longest decay and full reverb, which is the O(n·delay) path.
+    var worst = SynthParams()
+    worst.pitch = 3200
+    worst.snappiness = 0
+    worst.reverb = 1.0
+    measure("render 70ms, worst case (reverb 1.0)", 200) {
+        _ = SoundSynth.render(params: worst, durationMs: 70, seed: 1)
+    }
+
+    measure("render 110ms spacebar, worst case", 100) {
+        _ = SoundSynth.render(params: worst, durationMs: 110, seed: 1)
+    }
+
+    // A full profile save renders 11 variants back to back.
+    measure("full profile save (11 renders)", 30) {
+        for i in 1...6 { _ = SoundSynth.render(params: defaults, durationMs: 70, seed: i) }
+        for i in 1...3 { _ = SoundSynth.render(params: defaults, durationMs: 40, seed: 100 + i) }
+        _ = SoundSynth.render(params: defaults, durationMs: 95, seed: 999)
+        _ = SoundSynth.render(params: defaults, durationMs: 50, seed: 998)
+    }
+
+    print("\nA 60fps frame budget is 16.667 ms.")
+    exit(0)
+}
+
 // Headless render mode: builds the control panel offscreen, writes a PNG, and
 // exits. Lets the UI be inspected without a human having to describe it.
 if let outPath = ProcessInfo.processInfo.environment["KLACK_RENDER_TEST"] {

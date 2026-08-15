@@ -7,9 +7,13 @@ each key down and key up. It ships with a set of recorded and procedurally-synth
 packs, a live synthesis mixer for designing your own click, and an import pipeline for turning
 a recording of your actual keyboard into a playable pack.
 
-![Klack control panel](docs/screenshot.png)
+![Klack control panel](docs/images/panel.png)
 
-*(screenshot placeholder — replace `docs/screenshot.png`)*
+The mixer drawer, opened from the MIXER tab:
+
+![Klack with mixer drawer open](docs/images/panel-mixer.png)
+
+*Both images are produced from source by the render harness — see [Render harness](#render-harness).*
 
 ---
 
@@ -268,7 +272,7 @@ sums many overlapping clicks, and without the limiter that clips into a harsh me
 modes at inharmonic ratios plus a low-frequency body resonance, with detuned mode pairs for
 natural beating, a second delayed impulse for switch double-contact, a Schroeder reverb
 (4 parallel combs → 2 allpass stages), and `tanh` soft-clip saturation. A full 70 ms click
-renders in roughly 0.2 ms, which is what makes the mixer feel live. The Python original in
+renders in 0.165 ms (measured, `KLACK_BENCH=1`), which is what makes the mixer feel live. The Python original in
 `Resources/generate_sounds.py` carries the design notes; the Swift port exists so the mixer
 doesn't need a Python round-trip or an app rebuild.
 
