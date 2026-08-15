@@ -44,6 +44,24 @@ enum Plastic {
     static func gradient(_ stops: [(CGFloat, NSColor)]) -> NSGradient? {
         NSGradient(colors: stops.map { $0.1 }, atLocations: stops.map { $0.0 }, colorSpace: .sRGB)
     }
+
+    /// DSEG7 Classic (SIL OFL) is a true seven-segment face. Registered once
+    /// from the bundle; falls back to a monospace face if it's missing.
+    private static var didRegisterFonts = false
+    static func segmentFont(size: CGFloat) -> NSFont {
+        if !didRegisterFonts {
+            didRegisterFonts = true
+            if let dir = Bundle.main.resourceURL?.appendingPathComponent("fonts"),
+               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                for url in files where url.pathExtension.lowercased() == "ttf" {
+                    CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+                }
+            }
+        }
+        return NSFont(name: "DSEG7 Classic", size: size)
+            ?? NSFont(name: "DSEG7Classic-Bold", size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .bold)
+    }
 }
 
 /// Plain container that uses top-left origin, matching every other view in
@@ -296,13 +314,23 @@ final class BacklitDisplayView: NSView {
                          xRadius: 1, yRadius: 1).fill()
         }
 
-        NSAttributedString(string: bigValue, attributes: [
-            .font: NSFont.systemFont(ofSize: 40, weight: .bold),
+        // Seven-segment readout. Drawing "888" faintly behind the live value
+        // shows the unlit segments a real LCD has — the single biggest cue
+        // that separates a segment display from ordinary bold text.
+        let segFont = Plastic.segmentFont(size: 34)
+        NSAttributedString(string: "888", attributes: [
+            .font: segFont,
+            .foregroundColor: ink.withAlphaComponent(0.13),
+        ]).draw(at: NSPoint(x: 216, y: 44))
+
+        let padded = String(repeating: " ", count: max(0, 3 - bigValue.count)) + bigValue
+        NSAttributedString(string: padded, attributes: [
+            .font: segFont,
             .foregroundColor: ink.withAlphaComponent(0.92),
-        ]).draw(at: NSPoint(x: 232, y: 40))
+        ]).draw(at: NSPoint(x: 216, y: 44))
 
         NSAttributedString(string: "%", attributes: [
-            .font: NSFont.systemFont(ofSize: 18, weight: .bold),
+            .font: NSFont.systemFont(ofSize: 16, weight: .bold),
             .foregroundColor: ink.withAlphaComponent(0.55),
         ]).draw(at: NSPoint(x: 296, y: 60))
 
