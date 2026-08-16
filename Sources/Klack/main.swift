@@ -91,6 +91,83 @@ if let outPath = ProcessInfo.processInfo.environment["KLACK_RENDER_TEST"] {
         exit(0)
     }
 
+    // Social mode: composes the panel onto a branded canvas at a given aspect
+    // ratio, so Behance/LinkedIn/Instagram assets regenerate from source
+    // instead of being cropped by hand every time the design changes.
+    if let spec = ProcessInfo.processInfo.environment["KLACK_SOCIAL"] {
+        let parts = spec.split(separator: "x").compactMap { Int($0) }
+        let canvasW = CGFloat(parts.first ?? 1080)
+        let canvasH = CGFloat(parts.count > 1 ? parts[1] : 1080)
+        let caption = ProcessInfo.processInfo.environment["KLACK_CAPTION"] ?? ""
+
+        controller.simulateActivityForRender()
+        guard let panelRep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+        view.cacheDisplay(in: view.bounds, to: panelRep)
+
+        let canvas = NSImage(size: NSSize(width: canvasW, height: canvasH))
+        canvas.lockFocus()
+
+        let th = Theme.current
+        NSGradient(colors: [th.chassisMid.blended(withFraction: 0.55, of: .black) ?? .black,
+                            NSColor.black],
+                   atLocations: [0, 1], colorSpace: .sRGB)?
+            .draw(fromCenter: NSPoint(x: canvasW / 2, y: canvasH * 0.62), radius: 0,
+                  toCenter: NSPoint(x: canvasW / 2, y: canvasH * 0.62),
+                  radius: max(canvasW, canvasH) * 0.85, options: [])
+
+        // Faint accent wash so the backdrop carries the active theme.
+        NSGradient(colors: [th.accentMid.withAlphaComponent(0.20), .clear],
+                   atLocations: [0, 1], colorSpace: .sRGB)?
+            .draw(fromCenter: NSPoint(x: canvasW * 0.5, y: canvasH * 0.66), radius: 0,
+                  toCenter: NSPoint(x: canvasW * 0.5, y: canvasH * 0.66),
+                  radius: canvasW * 0.55, options: [])
+
+        let margin = canvasW * 0.09
+        let captionRoom: CGFloat = caption.isEmpty ? 0 : canvasH * 0.14
+        let maxW = canvasW - margin * 2
+        let maxH = canvasH - margin * 2 - captionRoom
+        let scale = min(maxW / view.bounds.width, maxH / view.bounds.height)
+        let drawW = view.bounds.width * scale
+        let drawH = view.bounds.height * scale
+        let drawRect = NSRect(x: (canvasW - drawW) / 2,
+                              y: (canvasH - drawH) / 2 + captionRoom * 0.5,
+                              width: drawW, height: drawH)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.75)
+        shadow.shadowOffset = NSSize(width: 0, height: -canvasH * 0.02)
+        shadow.shadowBlurRadius = canvasH * 0.055
+        shadow.set()
+        panelRep.draw(in: drawRect)
+        NSGraphicsContext.restoreGraphicsState()
+
+        if !caption.isEmpty {
+            let para = NSMutableParagraphStyle()
+            para.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: canvasW * 0.032, weight: .semibold),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.92),
+                .kern: canvasW * 0.004,
+                .paragraphStyle: para,
+            ]
+            let s = NSAttributedString(string: caption, attributes: attrs)
+            let h = s.boundingRect(with: NSSize(width: maxW, height: 400),
+                                   options: [.usesLineFragmentOrigin]).height
+            s.draw(with: NSRect(x: margin, y: margin * 0.5, width: maxW, height: h),
+                   options: [.usesLineFragmentOrigin])
+        }
+
+        canvas.unlockFocus()
+
+        guard let tiff = canvas.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
+        try? png.write(to: URL(fileURLWithPath: outPath))
+        print("social \(Int(canvasW))x\(Int(canvasH)) -> \(outPath)")
+        exit(0)
+    }
+
     controller.simulateActivityForRender()
     snapshot(to: URL(fileURLWithPath: outPath))
     print("rendered \(Int(view.bounds.width))x\(Int(view.bounds.height)) -> \(outPath)")
