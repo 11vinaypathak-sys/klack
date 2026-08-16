@@ -43,6 +43,73 @@ if ProcessInfo.processInfo.environment["KLACK_BENCH"] != nil {
     exit(0)
 }
 
+// Self-test: verifies the app can actually make sound, and exits non-zero if
+// not. A silent-audio bug is invisible to a clean build and to the render
+// harness, so this is the check that catches it before shipping.
+if ProcessInfo.processInfo.environment["KLACK_SELFTEST"] != nil {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    var failures: [String] = []
+
+    let resourceDir = Bundle.main.resourceURL ?? Bundle.main.bundleURL
+    guard let engine = ClickAudioEngine(resourceDirectory: resourceDir) else {
+        print("FAIL  audio engine could not be constructed at all")
+        exit(1)
+    }
+
+    let h = engine.health()
+    print("engine running   : \(h.engineRunning)")
+    print("keydown samples  : \(h.downBufferCount)")
+    print("keyup samples    : \(h.upBufferCount)")
+    print("space samples    : \(h.hasSpaceBuffers)")
+    print("buffer format    : \(h.bufferFormat)")
+    print("output format    : \(h.outputFormat)")
+    failures.append(contentsOf: h.problems)
+
+    // Scheduling is the real proof — a graph can be "running" and still throw
+    // when a buffer whose format doesn't match the connection is scheduled.
+    engine.playKeyDown(isSpace: false)
+    engine.playKeyDown(isSpace: true)
+    engine.playKeyUp(isSpace: false)
+    RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+
+    let after = engine.health()
+    if !after.engineRunning {
+        failures.append("engine stopped after playing — the graph fell over on a real buffer")
+    }
+
+    // Synthesis path, used by the live mixer.
+    let samples = SoundSynth.render(params: SynthParams(), durationMs: 70, seed: 1)
+    if samples.isEmpty {
+        failures.append("SoundSynth produced no samples")
+    } else if samples.allSatisfy({ $0 == 0 }) {
+        failures.append("SoundSynth produced pure silence")
+    } else if samples.contains(where: { !$0.isFinite }) {
+        failures.append("SoundSynth produced non-finite samples (NaN/inf)")
+    }
+
+    // Every selectable pack must be loadable, not just the current one.
+    for pack in engine.availableProfiles {
+        guard engine.switchProfile(to: pack) else {
+            failures.append("pack '\(pack)' failed to load")
+            continue
+        }
+        let ph = engine.health()
+        if !ph.isHealthy {
+            failures.append("pack '\(pack)': \(ph.problems.joined(separator: "; "))")
+        }
+    }
+
+    print("")
+    if failures.isEmpty {
+        print("PASS  audio is healthy (\(engine.availableProfiles.count) packs verified)")
+        exit(0)
+    }
+    for f in failures { print("FAIL  \(f)") }
+    exit(1)
+}
+
 // Headless render mode: builds the control panel offscreen, writes a PNG, and
 // exits. Lets the UI be inspected without a human having to describe it.
 if let outPath = ProcessInfo.processInfo.environment["KLACK_RENDER_TEST"] {

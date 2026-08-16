@@ -74,6 +74,8 @@ final class ClickAudioEngine {
     private var format: AVAudioFormat?
     // Held so the graph can be rewired after an output-device change.
     private var limiterNode: AVAudioUnitEffect?
+    private var lastRestartAttempt: CFAbsoluteTime = 0
+    private var restartFailureLogged = false
     private var configChangeObserver: NSObjectProtocol?
 
     private(set) var currentProfile: String = "real_clicky"
@@ -152,8 +154,21 @@ final class ClickAudioEngine {
         let limiter = AVAudioUnitEffect(audioComponentDescription: limiterDescription)
         limiterNode = limiter
         engine.attach(limiter)
-        engine.connect(engine.mainMixerNode, to: limiter, format: fmt)
-        engine.connect(limiter, to: engine.outputNode, format: fmt)
+        // The mixer side runs at the sample's format, but the output node only
+        // accepts the *hardware* format — typically 48kHz stereo, while our
+        // packs are 44.1kHz mono. Handing it the file format is what produced
+        // kAudioUnitErr_FormatNotSupported (-10868) and left the engine unable
+        // to start. The mixer does the rate/channel conversion for us.
+        // The whole post-mixer chain must run at the *hardware* format. Our
+        // packs are 44.1kHz mono; the output chain is typically 48kHz stereo,
+        // and Apple's DynamicsProcessor won't initialize on a mono bus at all.
+        // Passing the file format here is what produced
+        // kAudioUnitErr_FormatNotSupported (-10868). The mixer converts for us,
+        // so only the player->mixer side uses the sample's format.
+        let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+        let chainFormat = hardwareFormat.sampleRate > 0 ? hardwareFormat : fmt
+        engine.connect(engine.mainMixerNode, to: limiter, format: chainFormat)
+        engine.connect(limiter, to: engine.outputNode, format: chainFormat)
 
         engine.mainMixerNode.outputVolume = volume
 
@@ -195,8 +210,9 @@ final class ClickAudioEngine {
         }
 
         // Reconnecting the mixer/limiter is what actually re-establishes the
-        // broken links to the new device.
-        engine.connect(engine.mainMixerNode, to: limiter, format: bufferFormat)
+        // broken links to the new device. Both post-mixer links use the
+        // hardware format — the limiter can't run on our mono sample format.
+        engine.connect(engine.mainMixerNode, to: limiter, format: outputFormat)
         engine.connect(limiter, to: engine.outputNode, format: outputFormat)
         for node in pool {
             engine.connect(node, to: engine.mainMixerNode, format: bufferFormat)
@@ -208,13 +224,29 @@ final class ClickAudioEngine {
     /// Engine can also be stopped by the system (sleep/wake, device loss), so
     /// every play path checks this rather than scheduling into a dead graph.
     @discardableResult
+    /// Restart is attempted at most once a second. Without the throttle a
+    /// persistently unstartable engine retries on every single keystroke,
+    /// which spins the CPU and floods the log with the same error.
     private func restartIfNeeded() -> Bool {
-        guard !engine.isRunning else { return true }
+        guard !engine.isRunning else {
+            restartFailureLogged = false
+            return true
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastRestartAttempt > 1.0 else { return false }
+        lastRestartAttempt = now
+
         do {
             try engine.start()
+            NSLog("Klack: audio engine restarted")
+            restartFailureLogged = false
             return true
         } catch {
-            NSLog("Klack: failed to restart audio engine: \(error)")
+            // Log the reason once per outage rather than once per attempt.
+            if !restartFailureLogged {
+                restartFailureLogged = true
+                NSLog("Klack: failed to restart audio engine: \(error)")
+            }
             return false
         }
     }
@@ -339,6 +371,52 @@ final class ClickAudioEngine {
         } else if let b = upBuffers.randomElement() {
             play(b)
         }
+    }
+
+    // MARK: Health
+
+    /// Whether the engine is actually able to produce sound right now.
+    ///
+    /// Exists because a silent-audio regression is invisible to every other
+    /// check we have: the app launches, the UI renders, the build is clean,
+    /// and nothing sounds. `KLACK_SELFTEST` asserts on this so a broken audio
+    /// graph fails loudly instead of shipping quiet.
+    struct Health {
+        var engineRunning = false
+        var downBufferCount = 0
+        var upBufferCount = 0
+        var hasSpaceBuffers = false
+        var outputFormat = ""
+        var bufferFormat = ""
+        var problems: [String] = []
+        var isHealthy: Bool { problems.isEmpty }
+    }
+
+    func health() -> Health {
+        var h = Health()
+        h.engineRunning = engine.isRunning
+        h.downBufferCount = downBuffers.count
+        h.upBufferCount = upBuffers.count
+        h.hasSpaceBuffers = spaceDownBuffer != nil && spaceUpBuffer != nil
+        h.outputFormat = "\(engine.outputNode.outputFormat(forBus: 0))"
+        h.bufferFormat = format.map { "\($0)" } ?? "nil"
+
+        if !engine.isRunning {
+            h.problems.append("audio engine is not running — nothing will be audible")
+        }
+        if downBuffers.isEmpty {
+            h.problems.append("no keydown samples loaded")
+        }
+        if downBuffers.contains(where: { $0.frameLength == 0 }) {
+            h.problems.append("a keydown sample has zero frames and would play silence")
+        }
+        if upBuffers.isEmpty {
+            h.problems.append("no keyup samples loaded")
+        }
+        if pool.isEmpty {
+            h.problems.append("player pool is empty")
+        }
+        return h
     }
 
     // MARK: Analysis
