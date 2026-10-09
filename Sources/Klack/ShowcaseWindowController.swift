@@ -175,6 +175,7 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
         chassis.layer?.cornerRadius = 26
         chassis.layer?.masksToBounds = true
 
+        buildBrandBadge(into: chassis)
         buildLamps(into: chassis)
         buildChassisFurniture(into: chassis)
 
@@ -235,6 +236,32 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
 
             lamps.append((name, lamp, label))
         }
+    }
+
+    /// Stamps the brand mark onto the chassis, the same way a manufacturer's
+    /// logo is tooled into a real faceplate. It renders from KlackBrand -- the
+    /// identical path the app icon uses -- so the badge on the hardware and the
+    /// icon in the Dock are literally one piece of artwork.
+    private func buildBrandBadge(into chassis: NSView) {
+        let badge = BrandBadgeView(frame: NSRect(x: 24, y: 28, width: 32, height: 32))
+        chassis.addSubview(badge)
+
+        let wordmark = NSTextField(labelWithString: "KLACK")
+        wordmark.font = .systemFont(ofSize: 9, weight: .heavy)
+        // Wide tracking is what makes five letters read as a wordmark rather
+        // than a caption at this size.
+        wordmark.attributedStringValue = NSAttributedString(
+            string: "KLACK",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: .heavy),
+                .kern: 2.4,
+                .foregroundColor: NSColor(white: 1, alpha: 0.42),
+            ])
+        wordmark.backgroundColor = .clear
+        wordmark.isBordered = false
+        wordmark.alignment = .center
+        wordmark.frame = NSRect(x: 8, y: 63, width: 64, height: 12)
+        chassis.addSubview(wordmark)
     }
 
     private func buildChassisFurniture(into chassis: NSView) {

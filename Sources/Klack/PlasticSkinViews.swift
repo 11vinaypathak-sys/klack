@@ -1,4 +1,5 @@
 import Cocoa
+import KlackBrand
 
 // V2 skin: dark chassis + glossy white plastic plate + backlit amber display.
 // All views are `isFlipped` so coordinates match the Figma reference directly.
@@ -1362,5 +1363,36 @@ final class LEDLamp: NSControl {
 
     override func mouseDown(with event: NSEvent) {
         sendAction(action, to: target)
+    }
+}
+
+/// The brand mark tooled into the chassis.
+///
+/// Drawn as an engraving rather than a printed logo: a dark recess with a
+/// light lip below it, which is how a stamped or etched mark actually catches
+/// light on a physical faceplate. Printing it flat in accent colour would read
+/// as a sticker sitting on top of the panel.
+final class BrandBadgeView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let inset = bounds.insetBy(dx: 2, dy: 2)
+        let side = min(inset.width, inset.height)
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+
+        // Lip: the same shape nudged down, catching light from above.
+        NSGraphicsContext.current?.saveGraphicsState()
+        let lip = KlackBrand.markPath(side: side, center: NSPoint(x: center.x, y: center.y - 1))
+        NSColor(white: 1, alpha: 0.10).setFill()
+        lip.fill()
+        NSGraphicsContext.current?.restoreGraphicsState()
+
+        // Recess: darker than the chassis so it reads as cut into it.
+        let recess = KlackBrand.markPath(side: side, center: center)
+        NSColor(srgbRed: 0.03, green: 0.04, blue: 0.06, alpha: 0.72).setFill()
+        recess.fill()
+
+        // A trace of the accent so the mark still carries brand colour without
+        // looking applied on top.
+        Theme.current.accentMid.withAlphaComponent(0.12).setFill()
+        recess.fill()
     }
 }

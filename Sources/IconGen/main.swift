@@ -1,51 +1,39 @@
 import Cocoa
+import KlackBrand
 
-// One-off tool: renders Klack's app icon as a 1024x1024 PNG using a colored
-// squircle background + Apple's own SF Symbol artwork (safe/consistent,
-// since it's system-provided vector art rather than freehand shapes).
+// Renders the app icon by stamping the shared brand mark onto a macOS tile.
+//
+// The mark itself lives in KlackBrand so the icon and the in-app panel are the
+// same artwork rather than two drawings that happen to look alike.
 
-let size = 1024.0
+let size: CGFloat = 1024
 let canvas = NSImage(size: NSSize(width: size, height: size))
 
 canvas.lockFocus()
+NSGraphicsContext.current?.imageInterpolation = .high
 
-// Background: dark charcoal squircle with a subtle diagonal gradient for depth.
-let backgroundRect = NSRect(x: 0, y: 0, width: size, height: size)
-let cornerRadius = size * 0.225 // matches macOS Big Sur+ icon corner convention
-let backgroundPath = NSBezierPath(roundedRect: backgroundRect, xRadius: cornerRadius, yRadius: cornerRadius)
+let bgRect = NSRect(x: 0, y: 0, width: size, height: size)
+let corner = size * 0.225 // macOS Big Sur+ corner convention
+NSGraphicsContext.current?.saveGraphicsState()
+NSBezierPath(roundedRect: bgRect, xRadius: corner, yRadius: corner).addClip()
 
-let topColor = NSColor(calibratedRed: 0.16, green: 0.18, blue: 0.24, alpha: 1.0)
-let bottomColor = NSColor(calibratedRed: 0.06, green: 0.07, blue: 0.10, alpha: 1.0)
-let gradient = NSGradient(starting: topColor, ending: bottomColor)
-gradient?.draw(in: backgroundPath, angle: -90)
+KlackBrand.charcoal.setFill()
+bgRect.fill()
 
-// Foreground: a large keyboard glyph, tinted a bright mint/lime accent.
-let symbolConfig = NSImage.SymbolConfiguration(pointSize: size * 0.5, weight: .semibold)
-if let symbol = NSImage(systemSymbolName: "keyboard.fill", accessibilityDescription: nil)?
-    .withSymbolConfiguration(symbolConfig) {
-    let accent = NSColor(calibratedRed: 0.78, green: 0.98, blue: 0.55, alpha: 1.0)
-    let tinted = NSImage(size: symbol.size)
-    tinted.lockFocus()
-    accent.set()
-    let imageRect = NSRect(origin: .zero, size: symbol.size)
-    symbol.draw(in: imageRect)
-    imageRect.fill(using: .sourceAtop)
-    tinted.unlockFocus()
+// 0.56 leaves the tile breathing room on all sides; filling more makes the
+// icon feel cramped next to Apple's own, which sit well inside their tiles.
+KlackBrand.draw(in: NSRect(x: 0, y: 0, width: size, height: size).insetBy(dx: size * 0.22, dy: size * 0.22))
 
-    let symbolSize = tinted.size
-    let symbolOrigin = NSPoint(x: (size - symbolSize.width) / 2, y: (size - symbolSize.height) / 2 - size * 0.02)
-    tinted.draw(at: symbolOrigin, from: .zero, operation: .sourceOver, fraction: 1.0)
-}
-
+NSGraphicsContext.current?.restoreGraphicsState()
 canvas.unlockFocus()
 
-guard let tiffData = canvas.tiffRepresentation,
-      let bitmap = NSBitmapImageRep(data: tiffData),
-      let pngData = bitmap.representation(using: .png, properties: [:]) else {
+guard let tiff = canvas.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:]) else {
     print("Failed to render icon")
     exit(1)
 }
 
 let outputPath = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "icon_1024.png"
-try? pngData.write(to: URL(fileURLWithPath: outputPath))
+try? png.write(to: URL(fileURLWithPath: outputPath))
 print("Wrote \(outputPath)")

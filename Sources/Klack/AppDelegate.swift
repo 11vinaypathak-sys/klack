@@ -17,19 +17,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mixerParams = SynthParams()
     private var showcaseWindowController: ShowcaseWindowController?
 
-    // Fast-typing reward: track recent keydown timing, give a small volume
-    // boost once you're typing fast enough, scaling up the faster you go.
+    // Set while the Test & Fix flow is waiting for the user to press a key.
+    private var keysHeard = 0
+    private var lastDiagnosticWrite: CFAbsoluteTime = 0
+    private var pendingKeystrokeProof: (() -> Void)?
+    private var diagnosticPanel: NSPanel?
+    private var diagnosticLabel: NSTextField?
+    private var diagnosticTimeout: Timer?
+
+    // Typing flow: track recent keydown timing so the engine can tell an
+    // isolated keystroke from a run and shape level, tone and release to match.
     private var recentKeyDownTimes: [CFAbsoluteTime] = []
     private let speedWindowSize = 6
     private let fastTypingIntervalThreshold: Double = 0.18 // seconds between keys
     private let veryFastIntervalFloor: Double = 0.08
-    private let maxSpeedBoost: Float = 0.3 // up to +30% volume at max speed
 
     private let permissionMenuItem = NSMenuItem()
     private let enabledMenuItem = NSMenuItem()
     private var launchAtLoginItem: NSMenuItem?
     private var packItems: [NSMenuItem] = []
     private var volumeView: SliderMenuItemView!
+    private var softnessView: SliderMenuItemView!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAudioEngine()
@@ -40,6 +48,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.attemptStartTap()
         }
+
+        // The event tap and the audio engine both sit on OS resources
+        // (a mach port, a hardware audio device) that don't reliably survive
+        // sleep. Rebuilding both on wake is what actually fixes "works, then
+        // silently stops after the lid's been shut" -- waiting for the next
+        // keystroke to notice isn't good enough, since a dead tap never
+        // fires at all.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(handleWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
+
+        startDiagnosticHeartbeat()
+    }
+
+    @objc private func handleWake() {
+        keyTap.restart()
+        audioEngine?.restartIfNeeded()
+        lastDiagnosticWrite = 0
+        recordDiagnostic(keyHeard: false)
+    }
+
+    /// Keeps the diagnostic file current even while nothing is being typed --
+    /// a stalled keysHeard count next to a live timestamp is precisely the
+    /// signature of a deaf listener.
+    private func startDiagnosticHeartbeat() {
+        recordDiagnostic(keyHeard: false)
+        let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.lastDiagnosticWrite = 0
+            self.recordDiagnostic(keyHeard: false)
+        }
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func setupStatusItem() {
@@ -67,10 +107,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupKeyTapHandlers() {
         keyTap.onKeyDown = { [weak self] isSpace in
             guard let self else { return }
-            let boost = self.recordKeyDownAndComputeSpeedBoost()
-            self.audioEngine?.playKeyDown(isSpace: isSpace, gainMultiplier: boost)
+            // A real keystroke arriving here is the only honest proof the tap
+            // works end to end -- "tap is enabled" can be true while macOS
+            // silently delivers nothing.
+            if let confirm = self.pendingKeystrokeProof {
+                self.pendingKeystrokeProof = nil
+                confirm()
+            }
+            let flow = self.recordKeyDownAndComputeFlow()
+            self.audioEngine?.playKeyDown(isSpace: isSpace, flow: flow)
+            self.recordDiagnostic(keyHeard: true)
             NotificationCenter.default.post(name: .klackKeystroke, object: nil,
-                                            userInfo: ["boost": boost, "isSpace": isSpace])
+                                            userInfo: ["boost": ClickAudioEngine.burstGain(for: flow),
+                                                       "flow": flow, "isSpace": isSpace])
         }
         keyTap.onKeyUp = { [weak self] isSpace in
             self?.audioEngine?.playKeyUp(isSpace: isSpace)
@@ -78,10 +127,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyTap.isEnabled = true
     }
 
-    /// Returns 1.0 for normal typing, ramping up toward 1.0 + maxSpeedBoost
-    /// as your average interval between keystrokes drops below the fast-
-    /// typing threshold -- a small "reward" for typing quickly.
-    private func recordKeyDownAndComputeSpeedBoost() -> Float {
+    /// Writes what the *running* app is actually experiencing to disk.
+    ///
+    /// Every check so far spawned a fresh process, which is always healthy, so
+    /// it could never see the state of the copy in the menu bar. This is the
+    /// only way to tell "the listener is deaf" apart from "the audio is silent"
+    /// without guessing.
+    private func recordDiagnostic(keyHeard: Bool) {
+        if keyHeard { keysHeard += 1 }
+        let now = CFAbsoluteTimeGetCurrent()
+        // Throttled: this runs on every keystroke, and typing shouldn't mean
+        // writing a file hundreds of times a second.
+        guard now - lastDiagnosticWrite > 2.0 else { return }
+        lastDiagnosticWrite = now
+
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Klack")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let payload: [String: Any] = [
+            "keysHeard": keysHeard,
+            "tapEnabled": keyTap.isEnabled,
+            "tapLive": keyTap.isLive,
+            "permission": KeyTapManager.hasInputMonitoringPermission(),
+            "accessibility": KeyTapManager.hasAccessibilityPermission(),
+            "engineRunning": audioEngine?.health().engineRunning ?? false,
+            "currentPack": audioEngine?.currentProfile ?? "none",
+            "volume": volume,
+            "softness": audioEngine?.softness ?? -1,
+            "updated": ISO8601DateFormatter().string(from: Date()),
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
+            try? data.write(to: dir.appendingPathComponent("diagnostic.json"))
+        }
+    }
+
+    /// 0 while keystrokes are isolated, ramping to 1 as the average interval
+    /// between them drops below the fast-typing threshold. The engine reads
+    /// this as "how much of a run are we in" and softens accordingly.
+    private func recordKeyDownAndComputeFlow() -> Float {
         let now = CFAbsoluteTimeGetCurrent()
         recentKeyDownTimes.append(now)
         if recentKeyDownTimes.count > speedWindowSize {
@@ -94,25 +177,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             intervals.append(recentKeyDownTimes[i] - recentKeyDownTimes[i - 1])
         }
         let avgInterval = intervals.reduce(0, +) / Double(intervals.count)
-        guard avgInterval < fastTypingIntervalThreshold else { return 1.0 }
+        guard avgInterval < fastTypingIntervalThreshold else { return 0 }
 
         let progress = (fastTypingIntervalThreshold - avgInterval) / (fastTypingIntervalThreshold - veryFastIntervalFloor)
-        let clamped = min(1.0, max(0.0, progress))
-        return 1.0 + Float(clamped) * maxSpeedBoost
+        return Float(min(1.0, max(0.0, progress)))
+    }
+
+    /// One request per launch. `CGRequestListenEventAccess` only raises a
+    /// prompt the first time for a given identity; calling it repeatedly from
+    /// the permission poll would be pure noise.
+    private var hasRequestedPermission = false
+
+    /// Asks for the permissions in a way that the prompt can actually be seen.
+    ///
+    /// This is the bug that made Klack look like it simply refused to work.
+    /// The app runs as an accessory (`LSUIElement`), so it has no Dock tile and
+    /// no way to bring a window forward -- and the permission dialogs are
+    /// presented *by our own process*. As an accessory it can raise them but
+    /// not front them, so they open behind every other window, or never render.
+    /// The request "succeeds", nothing is ever shown, and the only apparent
+    /// route left is toggling the entry in System Settings by hand -- which
+    /// silently fails whenever that entry is bound to a stale code identity.
+    ///
+    /// Becoming a regular app for a few seconds is what lets the dialog come to
+    /// the front. The delay before reverting matters: switching straight back
+    /// to accessory takes the dialog's front-most status with it.
+    private func requestPermissionsVisibly() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        // Input Monitoring only. Asking for Accessibility as well looks like a
+        // harmless second chance, but granting it flipped the old "either one
+        // works" check to true and convinced the app it was fine -- a second
+        // dialog that buys nothing and can actively mask the real failure.
+        KeyTapManager.requestInputMonitoringPermission()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     private func attemptStartTap() {
-        let granted = KeyTapManager.hasInputMonitoringPermission()
-        if granted {
-            keyTap.start()
+        // Gate on the capability itself, never on a permission flag that claims
+        // to predict it. `tapCreate` is the only authority on whether we can
+        // hear keys, and it disagrees with the flags: Accessibility trust reads
+        // as granted while still refusing a keyboard tap, because listening to
+        // keys needs Input Monitoring specifically.
+        //
+        // Trusting the flag is what wedged this app for weeks. Accessibility
+        // came back true, the old check said "granted", and the app hid the
+        // permission menu item and cancelled its own retry timer -- then sat
+        // there convinced it was healthy while stone deaf, with every route to
+        // recovery switched off. Asking the tap costs one syscall and cannot
+        // lie.
+        keyTap.start()
+        if keyTap.isLive {
             permissionMenuItem.isHidden = true
-            // Once the tap is live there's nothing left to poll for — this is
-            // a menu-bar app that runs all day, so a permanent 3s wakeup is
-            // pure battery cost.
+            // Only now is there nothing left to poll for. This is a menu-bar
+            // app that runs all day, so a permanent 3s wakeup is pure battery
+            // cost -- but it has to be bought with a live tap, not a boolean.
             permissionCheckTimer?.invalidate()
             permissionCheckTimer = nil
-        } else {
-            permissionMenuItem.isHidden = false
+            return
+        }
+
+        // No tap means Input Monitoring is missing, whatever else is granted.
+        permissionMenuItem.isHidden = false
+        if !hasRequestedPermission {
+            hasRequestedPermission = true
+            // Checking never prompts -- only requesting does. Without this the
+            // app launches silently denied and waits for the user to discover
+            // a menu item, which is why the only route to a grant was toggling
+            // the entry in System Settings by hand. That entry can be stale
+            // while looking correct; a system prompt always binds to the
+            // identity that is actually running.
+            requestPermissionsVisibly()
         }
     }
 
@@ -172,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        let testItem = NSMenuItem(title: "Play Test Sound", action: #selector(playTest), keyEquivalent: "t")
+        let testItem = NSMenuItem(title: "Reset & Test Klack…", action: #selector(testAndFix), keyEquivalent: "t")
         testItem.target = self
         menu.addItem(testItem)
 
@@ -184,6 +321,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          target: self, action: #selector(volumeChanged(_:)))
         volItem.view = volumeView
         menu.addItem(volItem)
+
+        let softItem = NSMenuItem()
+        softnessView = SliderMenuItemView(title: "Softness", value: audioEngine?.softness ?? ClickAudioEngine.defaultSoftness,
+                                          min: 0, max: 1,
+                                          formatter: { "\(Int($0 * 100))%" },
+                                          target: self, action: #selector(softnessChanged(_:)))
+        softItem.view = softnessView
+        menu.addItem(softItem)
 
         menu.addItem(.separator())
         menu.addItem(header("Design Your Own"))
@@ -296,17 +441,160 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for item in packItems {
             item.state = (item.representedObject as? String == name) ? .on : .off
         }
-        playTest()
+        audioEngine?.playKeyDown(isSpace: false)
     }
 
-    @objc private func playTest() {
-        audioEngine?.playKeyDown(isSpace: false)
+    /// One-button combo: reset both subsystems, play an actual sound, and
+    /// verify the whole pipeline actually worked rather than assuming it
+    /// did. Reports the true outcome instead of leaving it to be inferred
+    /// from silence -- if the retry doesn't fix it either, says so plainly
+    /// rather than pretending the reset button is a guarantee.
+    @objc private func testAndFix() {
+        showDiagnostic(text: "Resetting Klack…")
+        keyTap.restart()
+        audioEngine?.restartIfNeeded()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.verifyAfterReset(isRetry: false)
+        }
+    }
+
+    private func verifyAfterReset(isRetry: Bool) {
+        guard let engine = audioEngine else {
+            finishDiagnostic(success: false, detail: "the sound engine didn't load at all")
+            return
+        }
+
+        // Measure the signal actually leaving the mixer. Every status flag can
+        // read healthy while the app emits pure silence -- that mismatch is
+        // exactly what made this so hard to pin down -- so trust the waveform,
+        // not the flags.
+        let peak = engine.measureOutputPeak(seconds: 0.6) {
+            engine.playKeyDown(isSpace: false)
+            engine.playKeyDown(isSpace: true)
+        }
+        let health = engine.health()
+        let permission = KeyTapManager.hasInputMonitoringPermission()
+
+        if peak < 0.001 {
+            if !isRetry {
+                keyTap.restart()
+                audioEngine?.restartIfNeeded()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.verifyAfterReset(isRetry: true)
+                }
+                return
+            }
+            finishDiagnostic(success: false,
+                             detail: "the engine is emitting no signal at all (measured silence)")
+            return
+        }
+
+        guard permission, keyTap.isLive, health.isHealthy else {
+            if !isRetry {
+                // One honest retry before reporting failure -- a single
+                // transient hiccup shouldn't look like a broken app.
+                keyTap.restart()
+                audioEngine?.restartIfNeeded()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.verifyAfterReset(isRetry: true)
+                }
+                return
+            }
+            var reasons: [String] = []
+            if !permission { reasons.append("Input Monitoring permission isn't granted") }
+            else if !keyTap.isLive { reasons.append("the keyboard listener won't stay on") }
+            reasons.append(contentsOf: health.problems)
+            finishDiagnostic(success: false, detail: reasons.joined(separator: "; "))
+            return
+        }
+
+        // Everything reports healthy -- but reporting healthy is exactly what
+        // the broken state did too. Wait for a real keystroke as the proof.
+        updateDiagnostic(text: "Audio confirmed (level \(String(format: "%.2f", peak))).\n\nIf you heard nothing, check which output device your Mac is using.\n\nNow press any key…")
+        pendingKeystrokeProof = { [weak self] in
+            self?.finishDiagnostic(success: true, detail: nil)
+        }
+        diagnosticTimeout?.invalidate()
+        diagnosticTimeout = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
+            guard let self, self.pendingKeystrokeProof != nil else { return }
+            self.pendingKeystrokeProof = nil
+            self.finishDiagnostic(success: false,
+                                  detail: "sound works, but keystrokes aren't reaching Klack")
+        }
+    }
+
+    // MARK: Diagnostic panel
+
+    private func showDiagnostic(text: String) {
+        diagnosticPanel?.close()
+
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 130),
+                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel.title = "Klack"
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.frame = NSRect(x: 20, y: 20, width: 280, height: 90)
+        label.alignment = .center
+        label.font = NSFont.systemFont(ofSize: 13)
+        panel.contentView?.addSubview(label)
+
+        panel.center()
+        panel.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+
+        diagnosticPanel = panel
+        diagnosticLabel = label
+    }
+
+    private func updateDiagnostic(text: String) {
+        diagnosticLabel?.stringValue = text
+    }
+
+    private func finishDiagnostic(success: Bool, detail: String?) {
+        diagnosticTimeout?.invalidate()
+        diagnosticTimeout = nil
+        pendingKeystrokeProof = nil
+
+        if success {
+            updateDiagnostic(text: "✓ Working.\n\nSound and keyboard are both live.")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                self?.diagnosticPanel?.close()
+                self?.diagnosticPanel = nil
+            }
+            return
+        }
+
+        diagnosticPanel?.close()
+        diagnosticPanel = nil
+
+        let needsPermission = !KeyTapManager.hasInputMonitoringPermission()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Still not working"
+        alert.informativeText = "Reset didn't fix it — \(detail ?? "unknown issue")."
+            + (needsPermission
+               ? "\n\nKlack needs Input Monitoring access to hear your keyboard."
+               : "\n\nQuitting and reopening Klack usually clears this.")
+        if needsPermission { alert.addButton(withTitle: "Open Settings") }
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn && needsPermission {
+            openInputMonitoringSettings()
+        }
     }
 
     @objc private func volumeChanged(_ sender: NSSlider) {
         volume = Float(sender.doubleValue)
         audioEngine?.volume = volume
         volumeView.refreshValueLabel()
+    }
+
+    @objc private func softnessChanged(_ sender: NSSlider) {
+        audioEngine?.setSoftness(Float(sender.doubleValue))
+        softnessView.refreshValueLabel()
     }
 
     @objc private func pitchChanged(_ sender: NSSlider) {

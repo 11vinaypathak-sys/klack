@@ -1,5 +1,6 @@
 import AVFoundation
 import AudioToolbox
+import KlackObjC
 
 /// Plays overlapping click samples with low latency using a small round-robin
 /// pool of player nodes on one AVAudioEngine graph — this lets rapid typing
@@ -72,11 +73,42 @@ final class ClickAudioEngine {
     private let poolSize = 24
     private let profilesRoot: URL
     private var format: AVAudioFormat?
+
+    // Voice ducking. Without this, every still-ringing tail keeps summing at
+    // full level, so a fast burst becomes a wall of overlapping decays rather
+    // than distinct clicks. A real keyboard behaves the opposite way: the
+    // newest strike dominates and the previous ones recede. So each new
+    // keydown fades whatever is still ringing.
+    /// A tail being faded out, with the shape of its fade.
+    private struct DuckingVoice {
+        let node: AVAudioPlayerNode
+        /// Where the fade started, so the curve is applied to the note's own
+        /// level rather than compounding a per-tick multiplier.
+        let startVolume: Float
+        var elapsed: Double
+        /// Seconds from full to silence. Tracks typing speed -- see `release(forFlow:)`.
+        let release: Double
+    }
+
+    private var duckingVoices: [DuckingVoice] = []
+    private var duckTimer: Timer?
+    private var lastDuckTick: CFAbsoluteTime = 0
+    /// Release bounds, seconds. Isolated keystrokes get the long one so the
+    /// note rings; a fast burst gets the short one so each click has cleared
+    /// before the next lands.
+    private let duckReleaseSlow: Double = 0.13
+    private let duckReleaseFast: Double = 0.045
+    /// Below this the tail is inaudible, so it's silenced outright and the
+    /// buffer left to run itself out.
+    private let duckFloor: Float = 0.05
     // Held so the graph can be rewired after an output-device change.
     private var limiterNode: AVAudioUnitEffect?
     private var lastRestartAttempt: CFAbsoluteTime = 0
     private var restartFailureLogged = false
     private var configChangeObserver: NSObjectProtocol?
+    /// Bounded so a permanently dead output device can't produce an endless
+    /// retry loop. Reset whenever the engine is running again.
+    private var configRetriesLeft = 6
 
     private(set) var currentProfile: String = "real_clicky"
 
@@ -104,9 +136,35 @@ final class ClickAudioEngine {
     private var spaceDownBuffer: AVAudioPCMBuffer?
     private var spaceUpBuffer: AVAudioPCMBuffer?
 
+    /// A darker copy of the down samples, used once typing turns into a burst.
+    private var softDownBuffers: [AVAudioPCMBuffer] = []
+    private var softSpaceDownBuffer: AVAudioPCMBuffer?
+    /// Extra shelf applied on top of `softness` for the burst set.
+    private static let burstExtraSoftness: Float = 0.35
+
+    /// Position and direction of the walk through the sample variants.
+    private var melodyIndex = 0
+    private var melodyStep = 1
+
     var volume: Float = 0.8 {
         didSet { engine.mainMixerNode.outputVolume = volume }
     }
+
+    static let defaultSoftness: Float = 0.45
+    private static let softnessKey = "klack.softness"
+
+    /// UserDefaults bridges Float to NSNumber, so `as? Float` never matches a
+    /// value written with `set(_ : Float, forKey:)`.
+    private static func storedSoftness() -> Float {
+        guard let number = UserDefaults.standard.object(forKey: softnessKey) as? NSNumber else {
+            return defaultSoftness
+        }
+        return min(1, max(0, number.floatValue))
+    }
+
+    /// How much high-frequency energy to take out of each sample as it loads.
+    /// 0 is the raw recording, 1 is fully dark. See `soften(_:amount:)`.
+    private(set) var softness: Float = ClickAudioEngine.storedSoftness()
 
     init?(resourceDirectory: URL) {
         profilesRoot = resourceDirectory.appendingPathComponent("profiles")
@@ -188,11 +246,18 @@ final class ClickAudioEngine {
             object: engine,
             queue: .main
         ) { [weak self] _ in
+            // A genuine new device event deserves a fresh retry budget --
+            // otherwise a bad swap earlier in the session leaves later,
+            // recoverable ones with nothing left to retry with.
+            self?.configRetriesLeft = 6
             self?.handleConfigurationChange()
         }
     }
 
     deinit {
+        // The timer retains its closure until invalidated; leaving it running
+        // keeps firing against a deallocating engine.
+        duckTimer?.invalidate()
         if let observer = configChangeObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -201,24 +266,60 @@ final class ClickAudioEngine {
     /// The output format can change with the device (e.g. 44.1k -> 48k), so
     /// rewire the whole graph to the new hardware format before restarting.
     private func handleConfigurationChange() {
+        cancelDucking()
         let outputFormat = engine.outputNode.outputFormat(forBus: 0)
-        // A zero-rate format means the device isn't ready yet; the next
-        // notification (or the restart-on-play path) will pick it up.
-        guard outputFormat.sampleRate > 0, let bufferFormat = format, let limiter = limiterNode else {
+        // A zero-rate or zero-channel format means the device isn't ready
+        // yet -- mid-swap the old device is gone and the new one hasn't
+        // settled. Connecting against that is exactly what raises.
+        guard outputFormat.sampleRate > 0, outputFormat.channelCount > 0,
+              let bufferFormat = format, let limiter = limiterNode else {
             NSLog("Klack: configuration change with no usable output format yet")
+            // The device may settle a moment later without posting another
+            // notification, so re-check rather than staying disconnected.
+            scheduleConfigurationRetry()
             return
         }
 
         // Reconnecting the mixer/limiter is what actually re-establishes the
         // broken links to the new device. Both post-mixer links use the
         // hardware format — the limiter can't run on our mono sample format.
-        engine.connect(engine.mainMixerNode, to: limiter, format: outputFormat)
-        engine.connect(limiter, to: engine.outputNode, format: outputFormat)
-        for node in pool {
-            engine.connect(node, to: engine.mainMixerNode, format: bufferFormat)
+        //
+        // Wrapped because AVAudioEngine *raises* on invalid state here rather
+        // than returning an error, and an uncaught raise takes the whole app
+        // down -- which is the real cause of Klack silently disappearing after
+        // headphones/Bluetooth/sleep. A failed rewire must degrade to "no
+        // sound for a moment", never to "app is gone".
+        var thrown: NSError?
+        let ok = KlackRunCatchingExceptions({
+            self.engine.connect(self.engine.mainMixerNode, to: limiter, format: outputFormat)
+            self.engine.connect(limiter, to: self.engine.outputNode, format: outputFormat)
+            for node in self.pool {
+                self.engine.connect(node, to: self.engine.mainMixerNode, format: bufferFormat)
+            }
+        }, &thrown)
+
+        guard ok else {
+            NSLog("Klack: audio graph rewire failed (\(thrown?.localizedDescription ?? "unknown")) — retrying")
+            scheduleConfigurationRetry()
+            return
         }
+
         engine.mainMixerNode.outputVolume = volume
         restartIfNeeded()
+    }
+
+    /// Device transitions can leave the hardware unusable for a beat, and
+    /// macOS doesn't always post a second notification once it settles. Without
+    /// a retry the app stays silent until it's relaunched.
+    private func scheduleConfigurationRetry() {
+        guard configRetriesLeft > 0 else {
+            NSLog("Klack: giving up on audio rewire after repeated failures")
+            return
+        }
+        configRetriesLeft -= 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.handleConfigurationChange()
+        }
     }
 
     /// Engine can also be stopped by the system (sleep/wake, device loss), so
@@ -226,34 +327,51 @@ final class ClickAudioEngine {
     @discardableResult
     /// Restart is attempted at most once a second. Without the throttle a
     /// persistently unstartable engine retries on every single keystroke,
-    /// which spins the CPU and floods the log with the same error.
-    private func restartIfNeeded() -> Bool {
+    /// which spins the CPU and floods the log with the same error. Not
+    /// private: also called directly on wake-from-sleep, since waiting for
+    /// the next keystroke to trigger it means the very first keystroke
+    /// after waking is silently dropped.
+    func restartIfNeeded() -> Bool {
         guard !engine.isRunning else {
             restartFailureLogged = false
+            configRetriesLeft = 6
             return true
         }
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastRestartAttempt > 1.0 else { return false }
         lastRestartAttempt = now
 
-        do {
-            try engine.start()
+        // start() throws a Swift error for some failures but *raises* for
+        // others (a half-attached device mid-swap), so both have to be handled
+        // or the raise kills the app.
+        var startError: Error?
+        var thrown: NSError?
+        let noRaise = KlackRunCatchingExceptions({
+            do { try self.engine.start() } catch { startError = error }
+        }, &thrown)
+
+        if noRaise && startError == nil {
             NSLog("Klack: audio engine restarted")
             restartFailureLogged = false
+            configRetriesLeft = 6
             return true
-        } catch {
-            // Log the reason once per outage rather than once per attempt.
-            if !restartFailureLogged {
-                restartFailureLogged = true
-                NSLog("Klack: failed to restart audio engine: \(error)")
-            }
-            return false
         }
+
+        // Log the reason once per outage rather than once per attempt.
+        if !restartFailureLogged {
+            restartFailureLogged = true
+            let reason = startError.map { "\($0)" } ?? thrown?.localizedDescription ?? "unknown"
+            NSLog("Klack: failed to start audio engine: \(reason)")
+        }
+        return false
     }
 
     @discardableResult
     func switchProfile(to name: String) -> Bool {
         guard name != currentProfile else { return true }
+        // Tails from the outgoing pack shouldn't keep fading over the new
+        // one, and the pool may be reconnected to a different format below.
+        cancelDucking()
         let previous = currentProfile
         currentProfile = name
         do {
@@ -302,6 +420,7 @@ final class ClickAudioEngine {
                 NSLog("Klack: unreadable or empty sample at \(url.lastPathComponent)")
                 return nil
             }
+            Self.soften(buffer, amount: softness)
             return buffer
         }
 
@@ -324,7 +443,86 @@ final class ClickAudioEngine {
         upBuffers = newUp
         spaceDownBuffer = newSpaceDown
         spaceUpBuffer = newSpaceUp
+
+        // Built once here rather than filtered per keystroke -- softening runs
+        // a two-pole filter over every sample, which has no business happening
+        // on a keypress.
+        let darkened = newDown.compactMap { Self.darkerCopy(of: $0, extra: Self.burstExtraSoftness) }
+        // A partial set would desynchronise the melodic walk from the normal
+        // set, so it's all or nothing.
+        softDownBuffers = darkened.count == newDown.count ? darkened : []
+        softSpaceDownBuffer = newSpaceDown.flatMap { Self.darkerCopy(of: $0, extra: Self.burstExtraSoftness) }
         return fmt
+    }
+
+    private static func darkerCopy(of buffer: AVAudioPCMBuffer, extra: Float) -> AVAudioPCMBuffer? {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameCapacity),
+              let source = buffer.floatChannelData,
+              let destination = copy.floatChannelData else { return nil }
+        copy.frameLength = buffer.frameLength
+        let frames = Int(buffer.frameLength)
+        for channel in 0..<Int(buffer.format.channelCount) {
+            destination[channel].update(from: source[channel], count: frames)
+        }
+        soften(copy, amount: extra)
+        return copy
+    }
+
+    /// Reloads the current pack through the new filter setting.
+    ///
+    /// Re-reading 11 short files is cheap enough to do on a slider drag, and it
+    /// keeps the tone shaping in one place. The alternative -- an EQ node in the
+    /// live graph -- means another node to rewire on every output-device change,
+    /// and that path is exactly where this app used to die.
+    func setSoftness(_ value: Float) {
+        let clamped = value.isFinite ? min(1, max(0, value)) : Self.defaultSoftness
+        guard abs(clamped - softness) > 0.001 else { return }
+        softness = clamped
+        UserDefaults.standard.set(clamped, forKey: Self.softnessKey)
+        // The panel's spectrum display is drawn from the buffers, so a stale
+        // cache would keep showing the old, brighter curve.
+        spectrumCache.removeAll()
+        _ = try? loadBuffers(directory: directory(forProfile: currentProfile))
+    }
+
+    /// High-shelf cut, applied in place.
+    ///
+    /// The shipped packs are real recordings, and on laptop speakers their
+    /// energy lands in the 3-6kHz band the ear is most sensitive to -- which
+    /// reads as thin and stabby rather than as a keyboard. Two cascaded
+    /// one-poles give the low band; subtracting it leaves the high band, and
+    /// only that gets attenuated. So this is a shelf, not a brick wall: the
+    /// click keeps its edge and just stops cutting.
+    ///
+    /// Deliberately no make-up gain. A shelf leaves everything below the corner
+    /// untouched, so the body of the click keeps its level on its own. Peak
+    /// normalising here actively defeats the filter -- on a click the peak *is*
+    /// the harsh transient, so restoring it puts back exactly the energy this
+    /// is meant to remove. (Measured: it reduced the 3-6kHz cut to -0.1dB.)
+    /// A bright pack getting quieter as it softens is correct; that's what the
+    /// Volume slider is for.
+    private static func soften(_ buffer: AVAudioPCMBuffer, amount: Float) {
+        guard amount > 0.001, let data = buffer.floatChannelData else { return }
+        let frames = Int(buffer.frameLength)
+        let sampleRate = Float(buffer.format.sampleRate)
+        guard frames > 0, sampleRate > 0 else { return }
+
+        // 2kHz corner, two poles: by 5kHz the low band has rolled off far
+        // enough that the shelf bites, while the sub-1kHz body is untouched.
+        let coeff = 1 - expf(-2 * .pi * 2000 / sampleRate)
+        let keepHighs = 1 - amount
+
+        for channel in 0..<Int(buffer.format.channelCount) {
+            let samples = data[channel]
+            var lowStage1: Float = 0
+            var lowStage2: Float = 0
+            for i in 0..<frames {
+                let x = samples[i]
+                lowStage1 += coeff * (x - lowStage1)
+                lowStage2 += coeff * (lowStage1 - lowStage2)
+                samples[i] = lowStage2 + (x - lowStage2) * keepHighs
+            }
+        }
     }
 
     /// Prefer an idle node so a still-ringing tail is never hard-truncated;
@@ -343,26 +541,200 @@ final class ClickAudioEngine {
         return node
     }
 
-    private func play(_ buffer: AVAudioPCMBuffer, gain: Float = 1.0) {
+    private func play(_ buffer: AVAudioPCMBuffer, gain: Float = 1.0, ducksOthers: Bool = false,
+                      release fadeTime: Double? = nil) {
         // Scheduling into a stopped engine is silently dropped, so recover
         // first -- this covers the sleep/wake and device-loss cases.
         guard buffer.frameLength > 0, restartIfNeeded() else { return }
         let node = nextNode()
+        if ducksOthers {
+            duckVoices(except: node, release: fadeTime ?? duckReleaseSlow)
+        }
+        // This node may still be mid-fade from an earlier keystroke: player
+        // nodes stay "playing" until stopped, so the pool wraps and voices get
+        // recycled while ducking. Left in the list, the fade would immediately
+        // swallow the click being started here.
+        duckingVoices.removeAll { $0.node === node }
         // NaN fails every comparison, so min/max would let it through as the
         // upper bound (full blast); reject it explicitly.
         node.volume = gain.isFinite ? max(0.0, min(2.0, gain)) : 1.0
-        node.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
-        node.play()
+        // scheduleBuffer/play raise if the node's connection was invalidated
+        // by a device change we haven't rewired yet. A dropped click is a
+        // non-event; an uncaught raise here would kill the app mid-keystroke.
+        var thrown: NSError?
+        if !KlackRunCatchingExceptions({
+            node.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            node.play()
+        }, &thrown) {
+            NSLog("Klack: dropped a click (\(thrown?.localizedDescription ?? "unknown")) — rewiring")
+            handleConfigurationChange()
+        }
+    }
+
+    /// Marks every voice still ringing from an earlier keystroke to be faded.
+    /// Only a new *strike* ducks -- a key-up belongs to the keystroke that's
+    /// already sounding, so letting it duck would swallow the click it's
+    /// supposed to complete.
+    private func duckVoices(except newNode: AVAudioPlayerNode, release: Double) {
+        // Nodes stay "playing" after their buffer runs out, so isPlaying alone
+        // would sweep in long-finished voices; the volume check keeps this to
+        // the ones actually still making sound.
+        for node in pool where node !== newNode && node.isPlaying && node.volume > duckFloor {
+            if !duckingVoices.contains(where: { $0.node === node }) {
+                duckingVoices.append(DuckingVoice(node: node, startVolume: node.volume,
+                                                  elapsed: 0, release: release))
+            }
+        }
+        guard !duckingVoices.isEmpty, duckTimer == nil else { return }
+        lastDuckTick = CFAbsoluteTimeGetCurrent()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.stepDucking()
+        }
+        // Common modes so the fade keeps running while a menu is open --
+        // otherwise tails freeze mid-duck whenever the menu bar is showing.
+        RunLoop.main.add(timer, forMode: .common)
+        duckTimer = timer
+    }
+
+    private func stepDucking() {
+        let now = CFAbsoluteTimeGetCurrent()
+        // Time-based rather than per-tick so a dropped or late timer fire
+        // fades by the right amount instead of stretching the decay.
+        let dt = max(0, now - lastDuckTick)
+        lastDuckTick = now
+
+        // Raised cosine rather than an exponential. An exponential is steepest
+        // the instant the next key lands, which is what made a fast run sound
+        // like clicks piling onto each other. This one is flat at the start so
+        // the note keeps its identity, steepest in the middle, and flat again
+        // into silence -- so a tail eases out of the way and the next click
+        // arrives in clear air while still feeling joined to the one before.
+        var survivors: [DuckingVoice] = []
+        survivors.reserveCapacity(duckingVoices.count)
+        for var voice in duckingVoices {
+            guard voice.node.isPlaying else { continue }
+            voice.elapsed += dt
+            let progress = Float(min(1, voice.elapsed / voice.release))
+            let next = voice.startVolume * 0.5 * (1 + cosf(.pi * progress))
+            if progress >= 1 || next <= duckFloor {
+                // Silence it but let the scheduled buffer run itself out.
+                // Calling stop() here would make the node look idle to
+                // nextNode(), which then reuses it and calls play() before the
+                // render thread has cycled -- AVFoundation throws
+                // "player did not see an IO cycle" and the app dies.
+                voice.node.volume = 0
+                continue
+            }
+            voice.node.volume = next
+            survivors.append(voice)
+        }
+        duckingVoices = survivors
+
+        if duckingVoices.isEmpty {
+            duckTimer?.invalidate()
+            duckTimer = nil
+        }
+    }
+
+    /// Levels of every currently-sounding voice, loudest first. Used by the
+    /// ducking self-test to check that a fast burst actually produces one
+    /// dominant click over fading tails, rather than a stack of equals.
+    var activeVoiceLevels: [Float] {
+        pool.filter { $0.isPlaying }.map { $0.volume }.sorted(by: >)
+    }
+
+    /// Measures the actual signal leaving the mixer while `body` runs.
+    ///
+    /// Every other check tests intent -- engine running, buffers loaded, voice
+    /// volumes set. None of them prove sound is genuinely being produced. This
+    /// taps the real output, so "the app is silent" and "the sound is going to
+    /// a device you aren't listening to" can finally be told apart.
+    func measureOutputPeak(seconds: Double, _ body: () -> Void) -> Float {
+        var peak: Float = 0
+        let mixer = engine.mainMixerNode
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
+            guard let data = buffer.floatChannelData else { return }
+            for ch in 0..<Int(buffer.format.channelCount) {
+                let samples = data[ch]
+                for i in 0..<Int(buffer.frameLength) {
+                    peak = max(peak, abs(samples[i]))
+                }
+            }
+        }
+        defer { mixer.removeTap(onBus: 0) }
+        body()
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+        return peak
+    }
+
+    /// Voices belong to the graph being torn down or replaced, so any pending
+    /// fade is meaningless -- clear it rather than let the timer keep poking
+    /// nodes that are about to be reconnected.
+    private func cancelDucking() {
+        duckTimer?.invalidate()
+        duckTimer = nil
+        duckingVoices.removeAll()
     }
 
     /// `gainMultiplier` is the fast-typing reward boost (1.0 = normal,
     /// >1.0 = typing fast enough to earn a little extra volume).
-    func playKeyDown(isSpace: Bool, gainMultiplier: Float = 1.0) {
-        if isSpace, let b = spaceDownBuffer {
-            play(b, gain: gainMultiplier)
-        } else if let b = downBuffers.randomElement() {
-            play(b, gain: gainMultiplier)
+    /// Level applied to a keystroke at a given flow.
+    ///
+    /// Deliberately downward. This used to be a "fast typing reward" that made
+    /// bursts up to 30% *louder*, which is the opposite of what a run of typing
+    /// needs -- it stacked the clicks that were already stacking. A burst
+    /// should settle into the background and read as texture.
+    static func burstGain(for flow: Float) -> Float {
+        1 - 0.28 * min(1, max(0, flow))
+    }
+
+    private func release(forFlow flow: Float) -> Double {
+        duckReleaseSlow + (duckReleaseFast - duckReleaseSlow) * Double(flow)
+    }
+
+    /// `flow` is 0 for an isolated keystroke and 1 in a fast burst. It drives
+    /// level, tone and release together, so the faster you type the quieter,
+    /// darker and tighter each click becomes.
+    func playKeyDown(isSpace: Bool, flow: Float = 0) {
+        let f = flow.isFinite ? min(1, max(0, flow)) : 0
+        let gain = Self.burstGain(for: f)
+        let fade = release(forFlow: f)
+        // Past the halfway point the darker set takes over. There's no audible
+        // switch to worry about: every keystroke is a separate sound anyway,
+        // and flow moves gradually, so the character shifts rather than jumps.
+        let inBurst = f > 0.5
+
+        if isSpace {
+            if let b = (inBurst ? softSpaceDownBuffer : spaceDownBuffer) ?? spaceDownBuffer {
+                play(b, gain: gain, ducksOthers: true, release: fade)
+            }
+            return
         }
+        let source = (inBurst && !softDownBuffers.isEmpty) ? softDownBuffers : downBuffers
+        if let b = nextDownVariant(from: source, melodic: f > 0.35) {
+            play(b, gain: gain, ducksOthers: true, release: fade)
+        }
+    }
+
+    /// Walks the variants up and down instead of picking at random.
+    ///
+    /// Random selection is what makes a fast run sound like gravel: successive
+    /// clicks have no relationship, so the ear hears noise. Stepping through
+    /// the variants in order gives a burst a rising-then-falling contour, which
+    /// is enough for it to read as a phrase. Slow typing stays random, where
+    /// variety matters more than shape.
+    private func nextDownVariant(from buffers: [AVAudioPCMBuffer], melodic: Bool) -> AVAudioPCMBuffer? {
+        guard !buffers.isEmpty else { return nil }
+        guard melodic, buffers.count > 1 else { return buffers.randomElement() }
+        melodyIndex += melodyStep
+        if melodyIndex >= buffers.count - 1 {
+            melodyIndex = buffers.count - 1
+            melodyStep = -1
+        } else if melodyIndex <= 0 {
+            melodyIndex = 0
+            melodyStep = 1
+        }
+        return buffers[melodyIndex]
     }
 
     func playKeyUp(isSpace: Bool) {
