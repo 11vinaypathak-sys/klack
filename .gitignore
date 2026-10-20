@@ -32,3 +32,4 @@ docs/social/
 # Release artifacts are attached to GitHub Releases, not committed
 *.dmg
 *.zip
+*.apk
