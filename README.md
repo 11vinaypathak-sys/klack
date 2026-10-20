@@ -11,6 +11,11 @@ a recording of your actual keyboard into a playable pack.
 
 *Watch it **with sound** at [1vinaypathak.github.io/klack](https://1vinaypathak.github.io/klack/) — every click in the video is the actual WAV the app plays, and the panel is rendered from source, not screen-recorded.*
 
+**The reel.** The 84-second film about how Klack was made — the story, the process, the first
+click — is on Instagram: **[instagram.com/p/Dc5rn_OzGjC](https://www.instagram.com/p/Dc5rn_OzGjC/)**.
+The full-resolution MP4 is attached to the
+[v1.0 release](https://github.com/1vinaypathak/klack/releases/download/v1.0/Klack-reel.mp4) (167 MB).
+
 ![Klack control panel](docs/images/demo.gif)
 
 *The panel responding to live typing — the waveform, backlight, and status flags are driven by real keystrokes. ([higher-quality MP4](docs/images/demo.mp4))*
