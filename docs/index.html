@@ -4,109 +4,262 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Klack — every key, a sound</title>
-<meta name="description" content="A native macOS menu-bar app that plays mechanical-keyboard sounds on every keystroke. Free, open source, listen-only.">
+<meta name="description" content="A native macOS menu-bar app that plays mechanical-keyboard sounds on every keystroke. Type on this page to hear it. Free, open source, listen-only.">
 <meta property="og:title" content="Klack — every key, a sound">
-<meta property="og:description" content="Mechanical-keyboard sounds for every keystroke. Free for macOS.">
+<meta property="og:description" content="Type on this page to hear it. Mechanical-keyboard sounds for every keystroke, free for macOS.">
 <meta property="og:image" content="https://1vinaypathak.github.io/klack/images/panel.png">
 <meta property="og:type" content="website">
 <style>
+  @font-face {
+    font-family: "DSEG7";
+    src: url("fonts/DSEG7Classic-Bold.ttf") format("truetype");
+    font-weight: 700; font-display: swap;
+  }
   :root {
     --bg-top: #1f2535; --bg-bottom: #0d1119;
-    --ink: #f4f1ea; --dim: rgba(244,241,234,0.6); --faint: rgba(244,241,234,0.14);
-    --amber: #e9b25b; --amber-deep: #b57a2a;
-    --card: rgba(255,255,255,0.04);
+    --ink: #f4f1ea; --dim: rgba(244,241,234,.6); --faint: rgba(244,241,234,.14);
+    --amber: #e9b25b; --amber-deep: #b57a2a; --amber-ink: #2a1d08;
+    --lcd: #e2a95a; --lcd-dark: #c38a3b; --lcd-ink: #3b2a10; --lcd-ghost: rgba(59,42,16,.14);
+    --cap: #ecebe6; --cap-side: #c9c7c0; --cap-mod: #d7d5cf; --cap-ink: #3a3a3a;
+    --board: #262b38; --board-edge: #171b25;
+    --card: rgba(255,255,255,.04);
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body {
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    color: var(--ink);
+    font-family: var(--sans); color: var(--ink); line-height: 1.5;
     background: radial-gradient(ellipse at 50% 0%, var(--bg-top) 0%, var(--bg-bottom) 70%) fixed;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  /* grain: under 5% alpha, never a texture you can see, only one you can feel */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .045; z-index: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
   }
   a { color: var(--amber); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 20px; }
 
-  header { padding: 72px 0 28px; text-align: center; }
-  .mark { font-size: clamp(56px, 9vw, 112px); font-weight: 800; letter-spacing: .12em; margin: 0; line-height: 1; }
-  .tag { color: var(--amber); letter-spacing: .3em; font-size: 15px; margin: 18px 0 0; text-transform: uppercase; }
-  .lede { color: var(--dim); font-size: 20px; max-width: 640px; margin: 22px auto 0; }
-
-  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 34px 0 0; }
+  /* ---------- hero ---------- */
+  .hero { padding: 56px 0 0; }
+  .hero-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+  .mark { font-size: clamp(44px, 7vw, 84px); font-weight: 800; letter-spacing: .14em; margin: 0; line-height: 1; }
+  .tag { color: var(--amber); letter-spacing: .3em; font-size: 13px; margin: 12px 0 0; text-transform: uppercase; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn {
-    display: inline-flex; align-items: center; gap: 10px;
-    padding: 14px 22px; border-radius: 12px; font-weight: 600; font-size: 16px;
-    border: 1px solid var(--faint); color: var(--ink); background: var(--card);
+    display: inline-flex; align-items: center; gap: 10px; padding: 13px 20px; border-radius: 12px;
+    font-weight: 600; font-size: 15px; border: 1px solid var(--faint); color: var(--ink); background: var(--card);
+    cursor: pointer; font-family: var(--sans);
   }
-  .btn.primary { background: var(--amber); color: #2a1d08; border-color: transparent; }
+  .btn.primary { background: var(--amber); color: var(--amber-ink); border-color: transparent; }
   .btn.primary:hover { background: #f1c070; text-decoration: none; }
-  .btn:hover { text-decoration: none; border-color: rgba(255,255,255,0.3); }
-  .fine { color: var(--dim); font-size: 13px; margin: 14px 0 0; }
+  .btn:hover { text-decoration: none; border-color: rgba(255,255,255,.3); }
+  .fine { color: var(--dim); font-size: 13px; margin: 10px 0 0; }
 
-  .video { margin: 56px 0 0; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,.55); background: #000; aspect-ratio: 16/9; }
-  .video video { width: 100%; height: 100%; display: block; }
-  .video-note { color: var(--dim); font-size: 14px; text-align: center; margin: 14px 0 0; }
+  /* ---------- the instrument ---------- */
+  .instrument {
+    margin: 36px 0 0; display: grid; grid-template-columns: 1fr 360px; gap: 22px; align-items: stretch;
+  }
+  @media (max-width: 960px) { .instrument { grid-template-columns: 1fr; } }
 
+  .stage {
+    position: relative; border-radius: 22px; background: var(--board-edge); padding: 3px;
+    box-shadow: 0 40px 100px rgba(0,0,0,.55);
+  }
+  .stage-inner {
+    border-radius: 20px; padding: 22px 22px 18px;
+    background: linear-gradient(180deg, #2c3140 0%, #1b1f2a 100%);
+  }
+  .hint {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 14px;
+    font-size: 13px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim);
+  }
+  .hint b { color: var(--amber); font-weight: 700; }
+  .hint .live { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .hint .dot { width: 8px; height: 8px; border-radius: 4px; background: #5a6070; transition: background .2s, box-shadow .2s; }
+  .hint .dot.on { background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+
+  .kb { width: 100%; height: auto; display: block; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+  .kb .cap { cursor: pointer; }
+  .kb .face { transition: transform 40ms ease-out, fill 60ms ease-out; }
+  .kb .side { transition: transform 40ms ease-out; }
+  .kb .lbl { font-family: var(--sans); font-weight: 600; fill: var(--cap-ink); pointer-events: none; transition: transform 40ms ease-out; }
+  .kb .gloss { pointer-events: none; transition: transform 40ms ease-out; }
+  .kb .cap.down .face, .kb .cap.down .gloss, .kb .cap.down .lbl { transform: translateY(4px); }
+  .kb .cap.down .face { fill: var(--amber); }
+  .kb .cap.down .side { transform: translateY(-2px); }
+  .kb .cap.down .lbl { fill: var(--amber-ink); }
+
+  .caption {
+    margin: 16px 0 0; min-height: 42px; font-size: 26px; font-weight: 500; letter-spacing: -.2px; color: var(--ink);
+    white-space: pre-wrap; word-break: break-word; font-variant-ligatures: none;
+  }
+  .caption .caret { color: var(--amber); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- panel ---------- */
+  .panel {
+    border-radius: 22px; padding: 18px; background: linear-gradient(180deg, #f2f0ea 0%, #e3e1da 100%);
+    box-shadow: 0 40px 100px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.8); color: #222;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .lcd {
+    position: relative; border-radius: 16px; padding: 16px 18px 14px; border: 6px solid #2b2b2b;
+    background: radial-gradient(ellipse at 50% 0%, var(--lcd) 0%, var(--lcd-dark) 100%);
+    color: var(--lcd-ink); overflow: hidden;
+  }
+  /* gloss as a hard terminator, not a smear */
+  .lcd::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 46%;
+    background: linear-gradient(180deg, rgba(255,255,255,.18) 0%, rgba(255,255,255,.18) 99%, transparent 100%);
+    pointer-events: none;
+  }
+  .lcd-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .flag { font-size: 12px; letter-spacing: .18em; font-weight: 700; text-transform: uppercase; transition: opacity .15s; }
+  .flag.off { opacity: .35; }
+  /* unlit segments sit exactly under the lit ones, right-aligned like a real display */
+  .seg { font-family: "DSEG7", var(--mono); font-size: 44px; line-height: 1; display: inline-grid; }
+  .seg .ghost, .seg .lit { grid-area: 1 / 1; text-align: right; }
+  .seg .ghost { color: var(--lcd-ghost); }
+  .unit { font-size: 12px; letter-spacing: .18em; font-weight: 700; margin-left: 6px; }
+  .packname { font-size: 22px; letter-spacing: .14em; font-weight: 800; text-transform: uppercase; margin-top: 10px; }
+  .bars { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; height: 54px; align-items: end; margin-top: 10px; }
+  .bars i { display: block; background: var(--lcd-ink); opacity: .85; height: 6%; border-radius: 1px; transition: height 90ms ease-out; }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid rgba(0,0,0,.12); background: #fff; color: #333; font: 600 13px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase;
+  }
+  .chip .lamp { width: 10px; height: 10px; border-radius: 5px; background: #777; transition: background .2s, box-shadow .2s; }
+  .chip.on { border-color: var(--amber-deep); }
+  .chip.on .lamp { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+
+  .vol { display: grid; gap: 6px; }
+  .vol label { font: 700 11px/1 var(--sans); letter-spacing: .18em; text-transform: uppercase; color: #555; display: flex; justify-content: space-between; }
+  .vol input { width: 100%; accent-color: var(--amber-deep); }
+
+  .panel-note { color: #666; font-size: 12px; line-height: 1.45; margin: 0; }
+
+  /* ---------- sections ---------- */
   section { padding: 72px 0 0; }
   h2 { font-size: 13px; letter-spacing: .3em; text-transform: uppercase; color: var(--amber); margin: 0 0 18px; font-weight: 700; }
+  .lede { color: var(--dim); font-size: 18px; max-width: 720px; margin: 0 0 22px; }
+  .video { border-radius: 18px; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,.55); background: #000; aspect-ratio: 16/9; }
+  .video video { width: 100%; height: 100%; display: block; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
   .card { background: var(--card); border: 1px solid var(--faint); border-radius: 16px; padding: 22px; }
   .card h3 { margin: 0 0 8px; font-size: 18px; }
   .card p { margin: 0; color: var(--dim); font-size: 15px; }
-
+  .card .num { font-family: "DSEG7", var(--mono); color: var(--amber); font-size: 28px; margin: 0 0 10px; }
   ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
   ol.steps li { counter-increment: s; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
-  ol.steps li::before {
-    content: counter(s); width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center;
-    background: var(--amber); color: #2a1d08; font-weight: 800;
-  }
+  ol.steps li::before { content: counter(s); width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; background: var(--amber); color: var(--amber-ink); font-weight: 800; }
   ol.steps li p { margin: 4px 0 0; color: var(--dim); font-size: 15px; }
   ol.steps li strong { font-size: 17px; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px; }
+  code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px; }
   pre { background: rgba(0,0,0,.35); border: 1px solid var(--faint); border-radius: 12px; padding: 14px 16px; overflow: auto; }
   pre code { background: none; padding: 0; }
-
   .themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
   .themes img { width: 100%; border-radius: 12px; display: block; }
+  .themes figure { margin: 0; }
   .themes figcaption { color: var(--dim); font-size: 13px; letter-spacing: .2em; text-transform: uppercase; margin-top: 8px; text-align: center; }
-
   footer { padding: 72px 0 56px; color: var(--dim); font-size: 14px; text-align: center; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <header>
-    <h1 class="mark">KLACK</h1>
-    <p class="tag">Every key, a sound</p>
-    <p class="lede">A native macOS menu-bar app that plays mechanical-keyboard sounds on every keystroke. Three packs recorded from a real board, a live mixer to design your own, and an importer for your actual keyboard.</p>
-    <div class="cta">
-      <a class="btn primary" href="https://github.com/1vinaypathak/klack/releases/latest">Download for macOS</a>
-      <a class="btn" href="https://github.com/1vinaypathak/klack">Source on GitHub</a>
+  <header class="hero">
+    <div class="hero-top">
+      <div>
+        <h1 class="mark">KLACK</h1>
+        <p class="tag">Every key, a sound</p>
+      </div>
+      <div>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/1vinaypathak/klack/releases/latest">Download for macOS</a>
+          <a class="btn" href="https://github.com/1vinaypathak/klack">Source</a>
+        </div>
+        <p class="fine">Free · MIT · macOS 12+ · 1.6 MB · listen-only</p>
+      </div>
     </div>
-    <p class="fine">Free · open source (MIT) · macOS 12 or later · Apple silicon and Intel · 1.2 MB</p>
+
+    <!-- The instrument: a real keyboard you can type on, wired to the real packs. -->
+    <div class="instrument">
+      <div class="stage">
+        <div class="stage-inner">
+          <div class="hint">
+            <span id="hint-text"><b>Type anything.</b> This page plays the app's actual sound files.</span>
+            <span class="live"><span class="dot" id="live-dot"></span><span id="live-text">idle</span></span>
+          </div>
+          <svg class="kb" id="kb" viewBox="0 0 1316 456" aria-label="Keyboard — type on your own keyboard or tap the keys"></svg>
+          <div class="caption" id="caption"><span class="caret">|</span></div>
+        </div>
+      </div>
+
+      <aside class="panel" aria-label="Control panel">
+        <div class="lcd">
+          <div class="lcd-row">
+            <span class="flag" id="flag-enabled">Enabled</span>
+            <span class="flag off" id="flag-boost">Fast boost</span>
+          </div>
+          <div class="lcd-row" style="margin-top:8px">
+            <span class="flag off" id="flag-space">Spacebar</span>
+            <span><span class="seg"><span class="ghost">888</span><span class="lit" id="seg-keys">0</span></span><span class="unit">KEYS</span></span>
+          </div>
+          <div class="lcd-row" style="margin-top:4px">
+            <span class="packname" id="lcd-pack">Clicky</span>
+            <span><span class="seg" style="font-size:28px"><span class="ghost">888</span><span class="lit" id="seg-kpm">0</span></span><span class="unit">KPM</span></span>
+          </div>
+          <div class="bars" id="bars"></div>
+        </div>
+
+        <div class="chips" id="chips">
+          <button class="chip on" data-pack="real_clicky"><span class="lamp"></span>Clicky</button>
+          <button class="chip" data-pack="real_creamy"><span class="lamp"></span>Creamy</button>
+          <button class="chip" data-pack="real_thocky"><span class="lamp"></span>Thocky</button>
+        </div>
+
+        <div class="vol">
+          <label>Volume <span id="vol-readout">80%</span></label>
+          <input id="vol" type="range" min="0" max="100" value="80">
+        </div>
+
+        <p class="panel-note">Three packs recorded from a real board, sliced into 6 down and 3 up variants each. The page walks through variants and trims gain as you speed up — the same rules the app runs. Your browser, speakers and room colour the result; the app itself is lower-latency than any web page can be.</p>
+      </aside>
+    </div>
   </header>
 
-  <div class="video">
-    <video controls playsinline preload="metadata" poster="images/panel.png">
-      <source src="klack-demo.mp4" type="video/mp4">
-    </video>
-  </div>
-  <p class="video-note">Turn the sound on. Every click you hear is the actual WAV the app plays; the panel is rendered from source, not screen-recorded.</p>
+  <section>
+    <h2>The demo</h2>
+    <p class="lede">Twenty-three seconds, with sound. Every click is the actual WAV the app plays; the panel is rendered from source by the app's own harness — nothing here is screen-recorded.</p>
+    <div class="video">
+      <video controls playsinline preload="metadata" poster="images/panel.png">
+        <source src="klack-demo.mp4" type="video/mp4">
+      </video>
+    </div>
+  </section>
 
   <section>
     <h2>The reel — how it was made</h2>
-    <p style="color:var(--dim);margin:0 0 18px">An 84-second film about the process: the idea, the research into three kinds of click, the control panel, and the first real keystroke. Posted on Instagram; the full-resolution cut is below.</p>
-    <div class="cta" style="justify-content:flex-start;margin:0 0 22px">
-      <a class="btn primary" href="https://www.instagram.com/p/Dc5rn_OzGjC/" target="_blank" rel="noopener">Watch the reel on Instagram</a>
-      <a class="btn" href="https://github.com/1vinaypathak/klack/releases/download/v1.0/Klack-reel.mp4">Full-resolution MP4 (167 MB)</a>
-    </div>
-    <div class="video" style="margin:0;max-width:420px;aspect-ratio:9/16">
-      <video controls playsinline preload="metadata">
-        <source src="klack-reel.mp4" type="video/mp4">
-      </video>
+    <div class="two">
+      <div>
+        <p class="lede" style="margin-bottom:18px">An 84-second film about the process: the idea, the research into three kinds of click, the control panel, and the first real keystroke.</p>
+        <div class="cta">
+          <a class="btn primary" href="https://www.instagram.com/p/Dc5rn_OzGjC/" target="_blank" rel="noopener">Watch on Instagram</a>
+          <a class="btn" href="https://github.com/1vinaypathak/klack/releases/download/v1.0/Klack-reel.mp4">Full-resolution MP4 (167 MB)</a>
+        </div>
+      </div>
+      <div class="video" style="max-width:380px;aspect-ratio:9/16;justify-self:end">
+        <video controls playsinline preload="metadata">
+          <source src="klack-reel.mp4" type="video/mp4">
+        </video>
+      </div>
     </div>
   </section>
 
@@ -120,14 +273,15 @@
   </section>
 
   <section>
-    <h2>What it does</h2>
+    <h2>Under the keycaps</h2>
+    <p class="lede">The parts that took the time, with the numbers that prove them.</p>
     <div class="grid">
-      <div class="card"><h3>Hears every key</h3><p>Key down and key up each play a sample; the space bar gets its own deeper pair, because on a real board it does.</p></div>
-      <div class="card"><h3>Three recorded packs</h3><p>Clicky, Creamy, Thocky — recorded from a real keyboard and sliced into variants so fast typing reads as a run, not a stutter.</p></div>
-      <div class="card"><h3>Design your own</h3><p>Six knobs — pitch, body, brightness, snappiness, attack, reverb — re-render the click live. Save it as a pack.</p></div>
-      <div class="card"><h3>Import your keyboard</h3><p>Record yourself typing, run one script, get a pack built from your actual switches.</p></div>
-      <div class="card"><h3>Stays out of the way</h3><p>Menu-bar only, no Dock icon. Settings survive relaunch. A second launch just focuses the running copy.</p></div>
-      <div class="card"><h3>Listen-only, by construction</h3><p>The event tap cannot modify or block input. Klack never logs, stores or transmits keystrokes. There is no network code in the app.</p></div>
+      <div class="card"><div class="num">-5.1</div><h3>dB, measured</h3><p>The first "softer" filter measured at −0.1 dB — its make-up gain restored the exact transient it removed. A ~100-line band-energy analyzer caught it. The shipped shelf cuts 3–6 kHz by 5.1 dB and leaves the lows at 0.0.</p></div>
+      <div class="card"><div class="num">3</div><h3>seconds to self-heal</h3><p>The app never trusts a permission flag. It asks the event tap whether it exists, every 3 s until it does, then stops polling. On macOS 26 the flags and the capability disagree in both directions.</p></div>
+      <div class="card"><div class="num">1398</div><h3>lines of plastic</h3><p>The hand-drawn keycap surface is the largest file in the project — bigger than the audio engine, 25× the menu code. Non-monotonic chrome ramp, grain under 5%, gloss as a hard terminator.</p></div>
+      <div class="card"><div class="num">0</div><h3>packs for strangers, once</h3><p>The first DMG passed every test and was silent for everyone else — the packs lived only on the author's Mac. The build now runs its audio test as a stranger and refuses to ship if they'd hear nothing.</p></div>
+      <div class="card"><div class="num">24</div><h3>voice pool</h3><p>Round-robin playback with idle-node selection and a limiter, so a fast burst stacks into a phrase instead of mush. Per-hit gain eases down as typing speeds up.</p></div>
+      <div class="card"><div class="num">0</div><h3>bytes leave the machine</h3><p>Listen-only event tap: it cannot modify or block input. Klack never logs, stores or transmits keystrokes. There is no network code in the app.</p></div>
     </div>
   </section>
 
@@ -143,22 +297,238 @@
 
   <section>
     <h2>If the toggle is on but it hears nothing</h2>
-    <p style="color:var(--dim);margin:0 0 12px">macOS is holding a permission record for an older build and matching the new one against it. Clear it; the dialog comes back within seconds:</p>
+    <p class="lede" style="margin-bottom:12px">macOS is holding a permission record for an older build and matching the new one against it. Clear it; the dialog comes back within seconds:</p>
     <pre><code>tccutil reset ListenEvent com.vinaypathak.klack</code></pre>
   </section>
 
   <section>
-    <h2>Also in the repo</h2>
+    <h2>Other platforms</h2>
     <div class="grid">
-      <div class="card"><h3>Windows</h3><p>A lean tray-app port is in progress under <code>windows/</code>. Cross-compiled, not yet tested on a Windows machine — it will say so until it has been.</p></div>
-      <div class="card"><h3>Android</h3><p>Phones don't let an app hear other apps' keys, so the Android version is a keyboard: <strong>Klack Keyboard</strong>, under <code>android/</code>. In progress.</p></div>
+      <div class="card"><h3>Windows — untested</h3><p>A lean .NET tray app under <a href="https://github.com/1vinaypathak/klack/tree/main/windows">windows/</a>: global hook, same packs, pack switch, volume. Cross-compiled on a Mac and <strong>not yet run on Windows</strong>. <a href="https://github.com/1vinaypathak/klack/releases/latest">Grab the zip</a> and tell us what you saw.</p></div>
+      <div class="card"><h3>Android — untested</h3><p>Phones don't let an app hear other apps' keys, so there Klack <em>is</em> the keyboard: <a href="https://github.com/1vinaypathak/klack/tree/main/android">Klack Keyboard</a>, a QWERTY IME that clicks on every key. APK builds; <strong>no phone has run it yet</strong>.</p></div>
     </div>
   </section>
 
   <footer>
     Built by Vinay Pathak, with Claude. MIT licensed. DSEG7 Classic font by Keshikan, SIL OFL 1.1.
   </footer>
-
 </div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------------
+  // Keyboard geometry: a 60% board in key units. Every row sums to 15u.
+  // Same layout the demo video uses, so the page and the film agree.
+  // ------------------------------------------------------------------
+  const ROWS = [
+    [...'`1234567890-='.split('').map(k => ({ id: k, label: k, w: 1 })), { id: 'Backspace', label: 'delete', w: 2, mod: true }],
+    [{ id: 'Tab', label: 'tab', w: 1.5, mod: true }, ...'qwertyuiop[]'.split('').map(k => ({ id: k, label: k.toUpperCase(), w: 1 })), { id: '\\', label: '\\', w: 1.5, mod: true }],
+    [{ id: 'CapsLock', label: 'caps', w: 1.75, mod: true }, ...'asdfghjkl;\''.split('').map(k => ({ id: k, label: k.toUpperCase(), w: 1 })), { id: 'Enter', label: 'return', w: 2.25, mod: true }],
+    [{ id: 'ShiftLeft', label: 'shift', w: 2.25, mod: true }, ...'zxcvbnm,./'.split('').map(k => ({ id: k, label: k.toUpperCase(), w: 1 })), { id: 'ShiftRight', label: 'shift', w: 2.75, mod: true }],
+    [{ id: 'fn', label: 'fn', w: 1.25, mod: true }, { id: 'ControlLeft', label: 'ctrl', w: 1.25, mod: true }, { id: 'AltLeft', label: 'opt', w: 1.25, mod: true }, { id: 'MetaLeft', label: 'cmd', w: 1.25, mod: true },
+     { id: ' ', label: '', w: 6.25 },
+     { id: 'MetaRight', label: 'cmd', w: 1.25, mod: true }, { id: 'AltRight', label: 'opt', w: 1.25, mod: true }, { id: 'ControlRight', label: 'ctrl', w: 1.25, mod: true }],
+  ];
+  const U = 76, GAP = 8, ROW_H = 76, PAD = 28;
+  const svg = document.getElementById('kb');
+  const NS = 'http://www.w3.org/2000/svg';
+  const caps = new Map(); // id -> <g>
+
+  const el = (name, attrs, parent) => {
+    const n = document.createElementNS(NS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+
+  ROWS.forEach((row, r) => {
+    let x = PAD;
+    const y = PAD + r * (ROW_H + GAP);
+    for (const def of row) {
+      const w = def.w * U + (def.w - 1) * GAP;
+      const g = el('g', { class: 'cap', transform: `translate(${x} ${y})`, 'data-id': def.id }, svg);
+      el('rect', { class: 'side', x: 0, y: 6, width: w, height: ROW_H - 2, rx: 9, fill: 'var(--cap-side)' }, g);
+      el('rect', { class: 'face', x: 0, y: 0, width: w, height: ROW_H - 8, rx: 9, fill: def.mod ? 'var(--cap-mod)' : 'var(--cap)' }, g);
+      el('rect', { class: 'gloss', x: 6, y: 4, width: w - 12, height: 10, rx: 5, fill: 'rgba(255,255,255,.55)' }, g);
+      const wide = def.w > 1.4;
+      const t = el('text', { class: 'lbl', x: wide ? 12 : w / 2, y: ROW_H / 2 + (wide ? 8 : 6), 'text-anchor': wide ? 'start' : 'middle', 'font-size': wide ? 15 : 22 }, g);
+      t.textContent = def.label;
+      caps.set(def.id, g);
+      x += def.w * U + def.w * GAP;
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Audio: the app's real WAVs, decoded once per pack, played through a
+  // master gain. Variant walk + burst gain reduction mirror the app.
+  // ------------------------------------------------------------------
+  const LABELS = { real_clicky: 'Clicky', real_creamy: 'Creamy', real_thocky: 'Thocky' };
+  const FILES = ['click_down_1','click_down_2','click_down_3','click_down_4','click_down_5','click_down_6','click_up_1','click_up_2','click_up_3','click_space_down','click_space_up'];
+  let ctx = null, master = null;
+  const buffers = {}; // pack -> { name -> AudioBuffer }
+  const loading = {};
+  let pack = 'real_clicky';
+  let volume = 0.8;
+  let downIdx = 0, upIdx = 0, lastDownAt = 0;
+  let keys = 0;
+  const recent = []; // timestamps for KPM
+
+  function ensureAudio() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+      master = ctx.createGain(); master.gain.value = volume; master.connect(ctx.destination);
+    }
+    // Never await this: until the browser accepts a gesture it stays pending,
+    // and the panel must keep counting keys whether or not sound is allowed yet.
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+  function loadPack(name) {
+    if (buffers[name]) return Promise.resolve(buffers[name]);
+    if (loading[name]) return loading[name];
+    loading[name] = (async () => {
+      ensureAudio();
+      const out = {};
+      await Promise.all(FILES.map(async f => {
+        const res = await fetch(`packs/${name}/${f}.wav`);
+        out[f] = await ctx.decodeAudioData(await res.arrayBuffer());
+      }));
+      buffers[name] = out;
+      return out;
+    })();
+    return loading[name];
+  }
+  function play(buf, gain) {
+    if (!buf || !ctx) return;
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const g = ctx.createGain(); g.gain.value = gain;
+    src.connect(g); g.connect(master); src.start();
+  }
+  function hit(id, isDown) {
+    const now = performance.now();
+    const isSpace = id === ' ';
+    // Panel state updates synchronously; audio follows when the pack is ready.
+    let file, gain;
+    if (isDown) {
+      // Same rule as the app: as hits get denser, each one gets a little quieter.
+      const gap = now - lastDownAt; lastDownAt = now;
+      gain = Math.min(1, Math.max(0.72, 0.72 + (gap - 100) / 300 * 0.28));
+      file = isSpace ? 'click_space_down' : `click_down_${(downIdx++ % 6) + 1}`;
+      keys++; recent.push(now);
+      setFlag('flag-space', isSpace);
+      setFlag('flag-boost', gap < 140);
+      bump();
+    } else {
+      gain = 0.8;
+      file = isSpace ? 'click_space_up' : `click_up_${(upIdx++ % 3) + 1}`;
+    }
+    const want = pack;
+    loadPack(want).then(b => { if (ctx && ctx.state === 'running') play(b[file], gain); }).catch(() => {});
+  }
+
+  // ------------------------------------------------------------------
+  // Panel readouts.
+  // ------------------------------------------------------------------
+  const segKeys = document.getElementById('seg-keys');
+  const segKpm = document.getElementById('seg-kpm');
+  const bars = document.getElementById('bars');
+  const barEls = [];
+  for (let i = 0; i < 24; i++) barEls.push(bars.appendChild(document.createElement('i')));
+  const drive = new Array(24).fill(0);
+  const setFlag = (id, on) => document.getElementById(id).classList.toggle('off', !on);
+  function bump() {
+    // push a new column in from the right; the trace scrolls like the app's
+    drive.shift(); drive.push(0.55 + Math.random() * 0.45);
+  }
+  function tick() {
+    for (let i = 0; i < 24; i++) {
+      drive[i] *= 0.90;
+      barEls[i].style.height = Math.max(6, drive[i] * 100) + '%';
+    }
+    segKeys.textContent = String(Math.min(keys, 999));
+    const now = performance.now();
+    while (recent.length && now - recent[0] > 10000) recent.shift();
+    segKpm.textContent = String(Math.min(999, recent.length * 6));
+    const live = recent.length && now - recent[recent.length - 1] < 1500;
+    document.getElementById('live-dot').classList.toggle('on', !!live);
+    document.getElementById('live-text').textContent = live ? 'hearing you' : 'idle';
+    if (!live) setFlag('flag-boost', false);
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  // ------------------------------------------------------------------
+  // Caption: what you type, echoed, so the page is also a scratchpad.
+  // ------------------------------------------------------------------
+  const caption = document.getElementById('caption');
+  let text = '';
+  const render = () => { caption.textContent = text; const c = document.createElement('span'); c.className = 'caret'; c.textContent = '|'; caption.appendChild(c); };
+  function type(key) {
+    if (key === 'Backspace') text = text.slice(0, -1);
+    else if (key === 'Enter') text += '\n';
+    else if (key.length === 1) text += key;
+    if (text.length > 160) text = text.slice(-160);
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // Input: real keyboard (ignore auto-repeat, like the app) and taps.
+  // ------------------------------------------------------------------
+  const keyId = e => {
+    if (e.key === ' ') return ' ';
+    if (e.key.length === 1) return e.key.toLowerCase();
+    if (/^(Shift|Control|Alt|Meta)/.test(e.key)) return e.code;
+    return e.key;
+  };
+  const isMod = e => /^(Shift|Control|Alt|Meta|CapsLock|Tab)/.test(e.key);
+  const down = new Set();
+  window.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey) return; // leave shortcuts alone
+    if (e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable], video, button')) return;
+    if (e.repeat) return;
+    if (e.key === ' ' || e.key === 'Tab' || e.key === 'Backspace') e.preventDefault();
+    const id = keyId(e); down.add(id);
+    caps.get(id)?.classList.add('down');
+    hit(id, true);
+    if (!isMod(e)) type(e.key);
+    document.getElementById('hint-text').innerHTML = `<b>${LABELS[pack]}</b> pack — switch on the right`;
+  });
+  window.addEventListener('keyup', e => {
+    const id = keyId(e); down.delete(id);
+    caps.get(id)?.classList.remove('down');
+    hit(id, false);
+  });
+  window.addEventListener('blur', () => { for (const id of down) caps.get(id)?.classList.remove('down'); down.clear(); });
+
+  // Taps on the drawn keys (mobile, or just curiosity).
+  svg.addEventListener('pointerdown', e => {
+    const g = e.target.closest('.cap'); if (!g) return;
+    e.preventDefault();
+    const id = g.dataset.id; g.classList.add('down'); hit(id, true);
+    if (id.length === 1 || id === 'Backspace' || id === 'Enter') type(id);
+    const up = () => { g.classList.remove('down'); hit(id, false); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+    window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
+
+  // Pack chips and volume.
+  document.getElementById('chips').addEventListener('click', async e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    pack = b.dataset.pack;
+    document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === b));
+    document.getElementById('lcd-pack').textContent = LABELS[pack];
+    await loadPack(pack);
+    hit('k', true); setTimeout(() => hit('k', false), 60); // audition
+    b.blur();
+  });
+  const vol = document.getElementById('vol');
+  vol.addEventListener('input', () => {
+    volume = vol.value / 100; document.getElementById('vol-readout').textContent = vol.value + '%';
+    if (master) master.gain.value = volume;
+  });
+
+  // Warm the default pack on first interaction of any kind (autoplay policy).
+  const warm = () => { loadPack(pack); window.removeEventListener('pointerdown', warm); window.removeEventListener('keydown', warm); };
+  window.addEventListener('pointerdown', warm); window.addEventListener('keydown', warm);
+})();
+</script>
 </body>
 </html>
