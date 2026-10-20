@@ -7,6 +7,10 @@ each key down and key up. It ships with a set of recorded and procedurally-synth
 packs, a live synthesis mixer for designing your own click, and an import pipeline for turning
 a recording of your actual keyboard into a playable pack.
 
+[![Klack demo — keys pressed, clicks fired](docs/images/klack-demo.gif)](https://1vinaypathak.github.io/klack/)
+
+*Watch it **with sound** at [1vinaypathak.github.io/klack](https://1vinaypathak.github.io/klack/) — every click in the video is the actual WAV the app plays, and the panel is rendered from source, not screen-recorded.*
+
 ![Klack control panel](docs/images/demo.gif)
 
 *The panel responding to live typing — the waveform, backlight, and status flags are driven by real keystrokes. ([higher-quality MP4](docs/images/demo.mp4))*
@@ -36,6 +40,11 @@ The mixer drawer, opened from the MIXER tab:
 
 That is the whole install. If step 3 never shows a dialog, see
 [Input Monitoring permission](#input-monitoring-permission).
+
+**Other platforms.** A lean Windows tray-app port lives under [`windows/`](windows/) and an
+Android keyboard (phones don't let an app hear other apps' keys, so there it *is* the keyboard)
+under [`android/`](android/). Both are works in progress and their READMEs say exactly what has
+and hasn't been tested.
 
 ---
 

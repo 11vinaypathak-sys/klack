@@ -292,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !signature.isEmpty {
             menu.addItem(.separator())
-            menu.addItem(header("The 5 Signature Sounds"))
+            menu.addItem(header("Sound Packs"))
             for name in signature {
                 addPackItem(name, to: menu)
             }
@@ -307,9 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(header("Sound Pack"))
+        menu.addItem(header("Your Recordings"))
         if recorded.isEmpty {
-            let empty = NSMenuItem(title: "(none yet — waiting on recordings)", action: nil, keyEquivalent: "")
+            let empty = NSMenuItem(title: "(none yet — see Importing your own keyboard)", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
         } else {

@@ -84,6 +84,19 @@ fi
 echo "==> Verifying"
 # Runs the installed binary, not the build-output one, so a bad copy or a
 # missing resource is caught here rather than after launch.
+# A stranger has none of this machine's imported packs. Run the audio test
+# once more as that stranger -- an empty custom root -- so a build with no
+# bundled packs cannot ship. The first public DMG did exactly that: it
+# passed every test here, using packs that only existed on this Mac.
+FRESH_ROOT="$(mktemp -d)"
+KLACK_CUSTOM_ROOT="$FRESH_ROOT" KLACK_SELFTEST=1 "$APP/Contents/MacOS/Klack" >/dev/null 2>&1 || {
+  echo "!! fresh-install audio test failed: a user with no imported packs would hear nothing" >&2
+  rmdir "$FRESH_ROOT"
+  exit 1
+}
+rmdir "$FRESH_ROOT"
+echo "    fresh-install packs: ok"
+
 KLACK_SELFTEST=1 "$APP/Contents/MacOS/Klack" || {
   echo "!! self-test failed -- the installed app has broken audio" >&2
   exit 1

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klack — every key, a sound</title>
+<meta name="description" content="A native macOS menu-bar app that plays mechanical-keyboard sounds on every keystroke. Free, open source, listen-only.">
+<meta property="og:title" content="Klack — every key, a sound">
+<meta property="og:description" content="Mechanical-keyboard sounds for every keystroke. Free for macOS.">
+<meta property="og:image" content="https://1vinaypathak.github.io/klack/images/panel.png">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg-top: #1f2535; --bg-bottom: #0d1119;
+    --ink: #f4f1ea; --dim: rgba(244,241,234,0.6); --faint: rgba(244,241,234,0.14);
+    --amber: #e9b25b; --amber-deep: #b57a2a;
+    --card: rgba(255,255,255,0.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: radial-gradient(ellipse at 50% 0%, var(--bg-top) 0%, var(--bg-bottom) 70%) fixed;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+  header { padding: 72px 0 28px; text-align: center; }
+  .mark { font-size: clamp(56px, 9vw, 112px); font-weight: 800; letter-spacing: .12em; margin: 0; line-height: 1; }
+  .tag { color: var(--amber); letter-spacing: .3em; font-size: 15px; margin: 18px 0 0; text-transform: uppercase; }
+  .lede { color: var(--dim); font-size: 20px; max-width: 640px; margin: 22px auto 0; }
+
+  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 34px 0 0; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 14px 22px; border-radius: 12px; font-weight: 600; font-size: 16px;
+    border: 1px solid var(--faint); color: var(--ink); background: var(--card);
+  }
+  .btn.primary { background: var(--amber); color: #2a1d08; border-color: transparent; }
+  .btn.primary:hover { background: #f1c070; text-decoration: none; }
+  .btn:hover { text-decoration: none; border-color: rgba(255,255,255,0.3); }
+  .fine { color: var(--dim); font-size: 13px; margin: 14px 0 0; }
+
+  .video { margin: 56px 0 0; border-radius: 18px; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,.55); background: #000; aspect-ratio: 16/9; }
+  .video video { width: 100%; height: 100%; display: block; }
+  .video-note { color: var(--dim); font-size: 14px; text-align: center; margin: 14px 0 0; }
+
+  section { padding: 72px 0 0; }
+  h2 { font-size: 13px; letter-spacing: .3em; text-transform: uppercase; color: var(--amber); margin: 0 0 18px; font-weight: 700; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+  .card { background: var(--card); border: 1px solid var(--faint); border-radius: 16px; padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 18px; }
+  .card p { margin: 0; color: var(--dim); font-size: 15px; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; }
+  ol.steps li::before {
+    content: counter(s); width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center;
+    background: var(--amber); color: #2a1d08; font-weight: 800;
+  }
+  ol.steps li p { margin: 4px 0 0; color: var(--dim); font-size: 15px; }
+  ol.steps li strong { font-size: 17px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: rgba(255,255,255,.07); padding: 2px 7px; border-radius: 6px; }
+  pre { background: rgba(0,0,0,.35); border: 1px solid var(--faint); border-radius: 12px; padding: 14px 16px; overflow: auto; }
+  pre code { background: none; padding: 0; }
+
+  .themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .themes img { width: 100%; border-radius: 12px; display: block; }
+  .themes figcaption { color: var(--dim); font-size: 13px; letter-spacing: .2em; text-transform: uppercase; margin-top: 8px; text-align: center; }
+
+  footer { padding: 72px 0 56px; color: var(--dim); font-size: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1 class="mark">KLACK</h1>
+    <p class="tag">Every key, a sound</p>
+    <p class="lede">A native macOS menu-bar app that plays mechanical-keyboard sounds on every keystroke. Three packs recorded from a real board, a live mixer to design your own, and an importer for your actual keyboard.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/1vinaypathak/klack/releases/latest">Download for macOS</a>
+      <a class="btn" href="https://github.com/1vinaypathak/klack">Source on GitHub</a>
+    </div>
+    <p class="fine">Free · open source (MIT) · macOS 12 or later · Apple silicon and Intel · 1.2 MB</p>
+  </header>
+
+  <div class="video">
+    <video controls playsinline preload="metadata" poster="images/panel.png">
+      <source src="klack-demo.mp4" type="video/mp4">
+    </video>
+  </div>
+  <p class="video-note">Turn the sound on. Every click you hear is the actual WAV the app plays; the panel is rendered from source, not screen-recorded.</p>
+
+  <section>
+    <h2>Install in three steps</h2>
+    <ol class="steps">
+      <li><div><strong>Open the DMG, drag Klack to Applications.</strong><p>Nothing else is installed anywhere. Delete the app to uninstall.</p></div></li>
+      <li><div><strong>First launch: right-click Klack → Open → Open.</strong><p>Klack is signed but not notarized, so a plain double-click says "cannot be opened". Right-click → Open is Apple's own route past that; you do it once. If it still refuses: <code>xattr -dr com.apple.quarantine /Applications/Klack.app</code></p></div></li>
+      <li><div><strong>Allow Input Monitoring when asked.</strong><p>Flip Klack on in System Settings → Privacy &amp; Security → Input Monitoring and start typing. The app notices within three seconds — no relaunch.</p></div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card"><h3>Hears every key</h3><p>Key down and key up each play a sample; the space bar gets its own deeper pair, because on a real board it does.</p></div>
+      <div class="card"><h3>Three recorded packs</h3><p>Clicky, Creamy, Thocky — recorded from a real keyboard and sliced into variants so fast typing reads as a run, not a stutter.</p></div>
+      <div class="card"><h3>Design your own</h3><p>Six knobs — pitch, body, brightness, snappiness, attack, reverb — re-render the click live. Save it as a pack.</p></div>
+      <div class="card"><h3>Import your keyboard</h3><p>Record yourself typing, run one script, get a pack built from your actual switches.</p></div>
+      <div class="card"><h3>Stays out of the way</h3><p>Menu-bar only, no Dock icon. Settings survive relaunch. A second launch just focuses the running copy.</p></div>
+      <div class="card"><h3>Listen-only, by construction</h3><p>The event tap cannot modify or block input. Klack never logs, stores or transmits keystrokes. There is no network code in the app.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Four themes</h2>
+    <div class="themes">
+      <figure><img src="images/themes/amber.png" alt="Amber theme"><figcaption>Amber</figcaption></figure>
+      <figure><img src="images/themes/ice.png" alt="Ice theme"><figcaption>Ice</figcaption></figure>
+      <figure><img src="images/themes/phosphor.png" alt="Phosphor theme"><figcaption>Phosphor</figcaption></figure>
+      <figure><img src="images/themes/synth.png" alt="Synth theme"><figcaption>Synth</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>If the toggle is on but it hears nothing</h2>
+    <p style="color:var(--dim);margin:0 0 12px">macOS is holding a permission record for an older build and matching the new one against it. Clear it; the dialog comes back within seconds:</p>
+    <pre><code>tccutil reset ListenEvent com.vinaypathak.klack</code></pre>
+  </section>
+
+  <section>
+    <h2>Also in the repo</h2>
+    <div class="grid">
+      <div class="card"><h3>Windows</h3><p>A lean tray-app port is in progress under <code>windows/</code>. Cross-compiled, not yet tested on a Windows machine — it will say so until it has been.</p></div>
+      <div class="card"><h3>Android</h3><p>Phones don't let an app hear other apps' keys, so the Android version is a keyboard: <strong>Klack Keyboard</strong>, under <code>android/</code>. In progress.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Built by Vinay Pathak, with Claude. MIT licensed. DSEG7 Classic font by Keshikan, SIL OFL 1.1.
+  </footer>
+
+</div>
+</body>
+</html>

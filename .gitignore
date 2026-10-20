@@ -16,8 +16,12 @@ AppIcon/icon_1024.png
 # macOS
 .DS_Store
 
-# Generated sound profiles are reproducible from generate_sounds.py
-Resources/profiles/
+# Synthesized profiles are reproducible from generate_sounds.py and not
+# committed. The three recorded packs ARE committed: they are what ships.
+Resources/profiles/*
+!Resources/profiles/real_clicky/
+!Resources/profiles/real_creamy/
+!Resources/profiles/real_thocky/
 
 # Film / social production assets live outside the product repo
 film-assets/

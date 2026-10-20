@@ -631,8 +631,14 @@ final class ShowcaseWindowController: NSWindowController, NSWindowDelegate {
             body.needsDisplay = true
         }
 
-        // Cycle the active pack across the timeline.
-        let packIndex = min(lamps.count - 1, Int(t * CGFloat(max(1, lamps.count))))
+        // Cycle the active pack across the timeline -- unless a render pins
+        // one. A demo that plays the clicky pack while the LCD reads THOCKY
+        // is a lie in the one place the viewer is told to look.
+        var packIndex = min(lamps.count - 1, Int(t * CGFloat(max(1, lamps.count))))
+        if let pinned = ProcessInfo.processInfo.environment["KLACK_RENDER_PACK"],
+           let found = lamps.firstIndex(where: { $0.name == pinned }) {
+            packIndex = found
+        }
         if packIndex >= 0 && packIndex < lamps.count {
             for (i, entry) in lamps.enumerated() {
                 entry.lamp.isLit = (i == packIndex)

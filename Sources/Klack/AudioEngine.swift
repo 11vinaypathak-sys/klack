@@ -10,9 +10,15 @@ final class ClickAudioEngine {
     /// Packs right now -- only real recorded audio is, per explicit request.
     /// The generation code/resources still exist (Resources/generate_sounds.py,
     /// SoundSynth.swift) so this can be turned back on by repopulating these.
-    static let signatureProfileNames: [String] = []
+    /// The packs that ship inside the bundle. These are recordings of a real
+    /// board, not the synthesized packs from generate_sounds.py -- those are
+    /// kept for the mixer's starting points but were never good enough to
+    /// be the thing a stranger hears first. An empty list here means a fresh
+    /// install has no sound at all and the engine refuses to start, which is
+    /// exactly what the first public DMG did.
+    static let signatureProfileNames: [String] = ["real_clicky", "real_creamy", "real_thocky"]
     static let extraProfileNames: [String] = []
-    static let builtInProfileNames: [String] = []
+    static let builtInProfileNames: [String] = signatureProfileNames + extraProfileNames
 
     static let profileLabels: [String: String] = [
         "creamy": "Creamy",
@@ -43,6 +49,13 @@ final class ClickAudioEngine {
     /// selectable custom profile — lets the mixer-saved sound and a
     /// recorded-audio profile coexist without hardcoding a single slot.
     private static var customProfilesRoot: URL {
+        // Test hook: lets a self-test run as a stranger would, with no
+        // imported packs, so "fresh install has sound" is provable rather
+        // than assumed. The app ignores this; only KLACK_* instrument modes
+        // set it.
+        if let override = ProcessInfo.processInfo.environment["KLACK_CUSTOM_ROOT"] {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return appSupport.appendingPathComponent("Klack/CustomProfiles")
     }
@@ -131,7 +144,10 @@ final class ClickAudioEngine {
         if let entries = try? fm.contentsOfDirectory(atPath: Self.customProfilesRoot.path) {
             for entry in entries.sorted() {
                 let dir = Self.customProfileDirectory(named: entry)
-                if fm.fileExists(atPath: dir.appendingPathComponent("click_down_1.wav").path) {
+                // A custom pack with a built-in's name (an earlier import of
+                // the same recording) would otherwise list twice.
+                if fm.fileExists(atPath: dir.appendingPathComponent("click_down_1.wav").path),
+                   !names.contains(entry) {
                     names.append(entry)
                 }
             }
