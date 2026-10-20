@@ -110,7 +110,20 @@ final class ClickAudioEngine {
     /// retry loop. Reset whenever the engine is running again.
     private var configRetriesLeft = 6
 
-    private(set) var currentProfile: String = "real_clicky"
+    private static let profileKey = "klack.profile"
+    private static let volumeKey = "klack.volume"
+
+    /// Self-tests and benches run the same binary, so they share the app's
+    /// defaults domain. Without this they'd overwrite the user's saved pack
+    /// and volume every install -- the user's pack came back changed the
+    /// first time this was wired up.
+    static var persistsSettings = true
+
+    /// The pack the user last picked, or the shipped default. Loaded before
+    /// init looks for buffers so a relaunch comes back on the same sound
+    /// rather than snapping to the default -- which read as "it forgot".
+    private(set) var currentProfile: String =
+        UserDefaults.standard.string(forKey: ClickAudioEngine.profileKey) ?? "real_clicky"
 
     var availableProfiles: [String] {
         var names = Self.builtInProfileNames
@@ -146,8 +159,20 @@ final class ClickAudioEngine {
     private var melodyIndex = 0
     private var melodyStep = 1
 
-    var volume: Float = 0.8 {
-        didSet { engine.mainMixerNode.outputVolume = volume }
+    var volume: Float = ClickAudioEngine.storedVolume() {
+        didSet {
+            engine.mainMixerNode.outputVolume = volume
+            if Self.persistsSettings {
+                UserDefaults.standard.set(volume, forKey: Self.volumeKey)
+            }
+        }
+    }
+
+    private static func storedVolume() -> Float {
+        guard let number = UserDefaults.standard.object(forKey: volumeKey) as? NSNumber else {
+            return 0.8
+        }
+        return min(1, max(0, number.floatValue))
     }
 
     static let defaultSoftness: Float = 0.45
@@ -171,6 +196,12 @@ final class ClickAudioEngine {
 
         var startupFormat: AVAudioFormat?
         if let fmt = try? loadBuffers(directory: directory(forProfile: currentProfile)) {
+            startupFormat = fmt
+        } else if currentProfile != "real_clicky",
+                  let fmt = try? loadBuffers(directory: directory(forProfile: "real_clicky")) {
+            // The remembered pack is gone (a deleted custom profile, say).
+            // Fall back to the default instead of failing to start.
+            currentProfile = "real_clicky"
             startupFormat = fmt
         } else {
             // Default profile missing (e.g. fresh install with no recordings
@@ -377,6 +408,9 @@ final class ClickAudioEngine {
         do {
             let newFormat = try loadBuffers(directory: directory(forProfile: name))
             reconnectPoolIfNeeded(for: newFormat)
+            if Self.persistsSettings {
+                UserDefaults.standard.set(name, forKey: Self.profileKey)
+            }
             return true
         } catch {
             NSLog("Klack: failed to switch to profile \(name): \(error), reverting to \(previous)")

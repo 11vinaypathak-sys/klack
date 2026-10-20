@@ -33,6 +33,12 @@ cp "$BIN" "$APP/Contents/MacOS/Klack"
 
 # Sound packs and fonts live in the repo, not in the build output, so they're
 # copied separately -- a binary-only install silently loses new sound packs.
+# The synthesized packs are generated, not committed, so a fresh clone has
+# none. Build them on first run -- generate_sounds.py is pure stdlib Python.
+if [ ! -d "$ROOT/Resources/profiles" ]; then
+  echo "==> Generating synthesized sound packs (first run)"
+  python3 "$ROOT/Resources/generate_sounds.py"
+fi
 if [ -d "$ROOT/Resources/profiles" ]; then
   rsync -a --delete "$ROOT/Resources/profiles/" "$APP/Contents/Resources/profiles/"
 fi

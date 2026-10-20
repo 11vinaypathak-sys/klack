@@ -3,8 +3,11 @@
 *.o
 *.dSYM/
 
-# Assembled app bundle — rebuilt from sources, not tracked
-Klack.app/
+# Assembled app bundle — rebuilt from sources by build-scripts/install.sh.
+# Only Info.plist is tracked; the binary and copied resources are not.
+Klack.app/Contents/MacOS/
+Klack.app/Contents/Resources/
+Klack.app/Contents/_CodeSignature/
 
 # Generated intermediates
 AppIcon/Klack.iconset/
@@ -15,3 +18,13 @@ AppIcon/icon_1024.png
 
 # Generated sound profiles are reproducible from generate_sounds.py
 Resources/profiles/
+
+# Film / social production assets live outside the product repo
+film-assets/
+film-audio/
+film-script.md
+docs/social/
+
+# Release artifacts are attached to GitHub Releases, not committed
+*.dmg
+*.zip

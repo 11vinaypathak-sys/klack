@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let keyTap = KeyTapManager()
     private var permissionCheckTimer: Timer?
 
-    private var volume: Float = 0.8
+    private static let enabledKey = "klack.enabled"
     private var mixerParams = SynthParams()
     private var showcaseWindowController: ShowcaseWindowController?
 
@@ -40,6 +40,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var softnessView: SliderMenuItemView!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Two copies means two menu-bar icons and every key played twice.
+        // Launch-at-login plus a manual open is the usual way to get there.
+        let twins = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        if twins.count > 1 {
+            NSLog("Klack: already running, exiting this copy")
+            NSApp.terminate(nil)
+            return
+        }
         setupAudioEngine()
         setupKeyTapHandlers()
         setupStatusItem()
@@ -98,7 +106,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupAudioEngine() {
         let resourceDir = Bundle.main.resourceURL ?? Bundle.main.bundleURL
         audioEngine = ClickAudioEngine(resourceDirectory: resourceDir)
-        audioEngine?.volume = volume
         if audioEngine == nil {
             NSLog("Klack: could not load click sounds from \(resourceDir.path)")
         }
@@ -124,7 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyTap.onKeyUp = { [weak self] isSpace in
             self?.audioEngine?.playKeyUp(isSpace: isSpace)
         }
-        keyTap.isEnabled = true
+        // Honour a mute that was set before the last quit. Missing key means
+        // first run, which should be on.
+        keyTap.isEnabled = UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true
     }
 
     /// Writes what the *running* app is actually experiencing to disk.
@@ -152,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "accessibility": KeyTapManager.hasAccessibilityPermission(),
             "engineRunning": audioEngine?.health().engineRunning ?? false,
             "currentPack": audioEngine?.currentProfile ?? "none",
-            "volume": volume,
+            "volume": audioEngine?.volume ?? 0,
             "softness": audioEngine?.softness ?? -1,
             "updated": ISO8601DateFormatter().string(from: Date()),
         ]
@@ -316,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(header("Volume"))
         let volItem = NSMenuItem()
-        volumeView = SliderMenuItemView(title: "Volume", value: volume, min: 0, max: 1,
+        volumeView = SliderMenuItemView(title: "Volume", value: audioEngine?.volume ?? 0.8, min: 0, max: 1,
                                          formatter: { "\(Int($0 * 100))%" },
                                          target: self, action: #selector(volumeChanged(_:)))
         volItem.view = volumeView
@@ -433,6 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleEnabled() {
         keyTap.isEnabled.toggle()
         enabledMenuItem.state = keyTap.isEnabled ? .on : .off
+        UserDefaults.standard.set(keyTap.isEnabled, forKey: Self.enabledKey)
     }
 
     @objc private func selectPack(_ sender: NSMenuItem) {
@@ -587,8 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func volumeChanged(_ sender: NSSlider) {
-        volume = Float(sender.doubleValue)
-        audioEngine?.volume = volume
+        audioEngine?.volume = Float(sender.doubleValue)
         volumeView.refreshValueLabel()
     }
 

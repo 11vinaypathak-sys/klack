@@ -21,6 +21,24 @@ The mixer drawer, opened from the MIXER tab:
 
 ---
 
+## Download
+
+**[Download Klack-1.0.dmg](https://github.com/1vinaypathak/klack/releases/latest)** — macOS 12 or later, Apple silicon and Intel.
+
+1. Open the DMG and drag **Klack** into **Applications**.
+2. First launch: **right-click Klack.app → Open → Open.** Klack is signed but not notarized
+   (no Apple Developer account behind it), so a plain double-click shows "cannot be opened".
+   Right-click → Open is Apple's sanctioned way past that, and you only do it once. If macOS
+   still refuses, run `xattr -dr com.apple.quarantine /Applications/Klack.app` in Terminal.
+3. A system dialog asks to allow Klack to **monitor input**. Allow it, flip Klack **on** in
+   System Settings → Privacy & Security → Input Monitoring, and start typing. No relaunch
+   needed — the app notices within three seconds.
+
+That is the whole install. If step 3 never shows a dialog, see
+[Input Monitoring permission](#input-monitoring-permission).
+
+---
+
 ## What it does
 
 - **Global keystroke sounds.** Every key down and key up plays a sample. Space gets its own
@@ -44,58 +62,38 @@ knobs.
 ## Requirements
 
 - macOS 12 or later
-- Swift 5.9+ toolchain (Xcode or Command Line Tools)
+- Swift 5.9+ toolchain (Xcode or Command Line Tools) — only to build from source; the DMG needs nothing
 - Python 3 — only if you want to regenerate or import sounds
 
 ---
 
-## Build
+## Build from source
 
-Klack is a SwiftPM package with no external dependencies.
-
-```bash
-cd /path/to/klack
-swift build -c release --product Klack
-```
-
-That produces a bare executable. macOS will not grant Input Monitoring to a loose binary in a
-predictable way, and the app needs `LSUIElement` to stay out of the Dock, so it has to be
-assembled into a bundle:
+Klack is a SwiftPM package with no external dependencies. One script builds the binary,
+assembles the bundle, generates the synthesized sound packs on a fresh clone, signs it with a
+stable identity, runs three self-test suites, and relaunches the app:
 
 ```bash
-# 1. Bundle skeleton
-mkdir -p Klack.app/Contents/MacOS
-mkdir -p Klack.app/Contents/Resources
-
-# 2. Binary
-cp .build/release/Klack Klack.app/Contents/MacOS/Klack
-
-# 3. Resources — sound packs, bundled font, icon
-cp -R Resources/profiles Klack.app/Contents/Resources/
-cp -R Resources/fonts    Klack.app/Contents/Resources/
-cp AppIcon/Klack.icns    Klack.app/Contents/Resources/
-
-# 4. Info.plist is already checked in at Klack.app/Contents/Info.plist
-
-# 5. Ad-hoc sign. Required: an unsigned binary gets a new identity on every
-#    rebuild, so macOS forgets the Input Monitoring grant each time.
-codesign --force --deep --sign - Klack.app
-```
-
-Then launch it:
-
-```bash
-open Klack.app
+git clone https://github.com/1vinaypathak/klack.git
+cd klack
+./build-scripts/install.sh
 ```
 
 A keyboard glyph appears in the menu bar. There is no Dock icon and no main window —
-`LSUIElement` is set to `true` in `Info.plist`.
+`LSUIElement` is `true` in `Info.plist`.
 
-### Rebuilding
+Things the script does that are easy to get wrong by hand, and why they matter:
 
-After a code change, repeat steps 2 and 5. If you skip the re-sign, macOS will treat the app as
-a new binary and Input Monitoring will silently stop working until you remove and re-add it in
-System Settings.
+- **Signs with a pinned designated requirement.** An ad-hoc signature normally derives its
+  identity from the binary's hash, so every rebuild is a new app to macOS and the Input
+  Monitoring grant silently dies. The script pins the requirement to the bundle identifier and
+  then verifies it took, failing the build if it didn't.
+- **Refuses to ship broken audio.** Audio health across every pack, burst shaping, and crash
+  survival on audio-device change all run before launch. A failure exits non-zero.
+- **Quits the running copy first.** Replacing a binary under a live process leaves the old
+  code in memory and makes a fresh build look like it changed nothing.
+
+After a code change, run the same script again.
 
 ---
 
@@ -114,11 +112,22 @@ apart from everything else.
 2. Click **Grant Input Monitoring Access…**. This triggers the system prompt and opens
    System Settings → Privacy & Security → Input Monitoring.
 3. Enable **Klack** in the list.
-4. Quit and relaunch Klack.
 
-Klack polls for the permission every 3 seconds at startup and starts the tap the moment it is
-granted; once the tap is live, the timer is cancelled so it isn't waking the CPU all day. If
-permission is missing, the **Grant Input Monitoring Access…** item stays visible in the menu.
+Klack retries the tap every 3 seconds until it is live, then cancels the timer so it isn't
+waking the CPU all day. It gates on whether the tap actually exists, never on a permission
+flag — on macOS 26 the flags and the capability disagree in both directions. If the tap is
+missing, the **Grant Input Monitoring Access…** item stays visible in the menu.
+
+### Toggle is on but it still hears nothing
+
+macOS is holding a record for an older build of Klack and matching the new one against it.
+Nothing you do in System Settings fixes that; clear the record instead:
+
+```bash
+tccutil reset ListenEvent com.vinaypathak.klack
+```
+
+The permission dialog appears again within a few seconds. Allow it and you're done.
 
 ### If it still doesn't work
 

@@ -22,6 +22,12 @@ func installedAppPermission() -> String {
 
 // Benchmark mode: times the synthesis path so the performance claims in the
 // docs are measured rather than asserted.
+// Any KLACK_* mode is an instrument, not the app. Instruments must not leave
+// fingerprints in the user's settings.
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("KLACK_") }) {
+    ClickAudioEngine.persistsSettings = false
+}
+
 if ProcessInfo.processInfo.environment["KLACK_BENCH"] != nil {
     func measure(_ label: String, _ iterations: Int, _ body: () -> Void) {
         body() // warm up
