@@ -55,7 +55,7 @@ yes | sdkmanager --licenses
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 ```
 
-If your Mac's HTTPS goes through a TLS-intercepting proxy (corporate laptops with a TLS-intercepting proxy), Java will
+If your Mac's HTTPS goes through a TLS-intercepting proxy (for example Zscaler on a managed corporate laptop), Java will
 refuse Gradle's downloads with `PKIX path building failed`. Fix once by adding the proxy's root
 CA to a copy of the JDK truststore and pointing Gradle at it:
 
