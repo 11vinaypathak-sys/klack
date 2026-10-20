@@ -1,0 +1,8 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+# Bundled sound packs are copied from ../Resources/profiles by `./gradlew syncSoundPacks`
+app/src/main/assets/profiles/

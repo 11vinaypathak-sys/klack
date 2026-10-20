@@ -1,0 +1,8 @@
+<resources>
+    <color name="kb_background">#1C1C1E</color>
+    <color name="kb_key">#3A3A3C</color>
+    <color name="kb_key_pressed">#6E6E73</color>
+    <color name="kb_key_special">#2C2C2E</color>
+    <color name="kb_key_text">#F2F2F7</color>
+    <color name="kb_accent">#FFB000</color>
+</resources>

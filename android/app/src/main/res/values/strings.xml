@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">Klack Keyboard</string>
+    <string name="ime_name">Klack Keyboard</string>
+    <string name="subtype_en">English (US)</string>
+
+    <string name="setup_title">Set up</string>
+    <string name="setup_intro">Klack Keyboard is a keyboard. Android does not let any app hear what you type in other keyboards, so Klack has to be the keyboard you type on. Two steps:</string>
+    <string name="step_enable">1. Enable Klack Keyboard</string>
+    <string name="step_enable_hint">Opens the system “On-screen keyboard” list. Switch on Klack Keyboard and accept the standard warning.</string>
+    <string name="step_select">2. Select Klack Keyboard</string>
+    <string name="step_select_hint">Opens the keyboard picker. Choose Klack Keyboard. You can switch back any time with the keyboard icon in the navigation bar.</string>
+    <string name="status_not_enabled">Status: not enabled yet</string>
+    <string name="status_enabled">Status: enabled, but another keyboard is selected</string>
+    <string name="status_active">Status: enabled and selected ✓</string>
+
+    <string name="sound_title">Sound</string>
+    <string name="pack_label">Sound pack</string>
+    <string name="volume_label">Volume</string>
+    <string name="volume_hint">Also follows your phone’s media volume.</string>
+    <string name="try_hint">Tap here and type to try it</string>
+    <string name="preview">Preview</string>
+</resources>
