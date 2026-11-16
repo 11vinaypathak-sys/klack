@@ -7,14 +7,14 @@ each key down and key up. It ships with a set of recorded and procedurally-synth
 packs, a live synthesis mixer for designing your own click, and an import pipeline for turning
 a recording of your actual keyboard into a playable pack.
 
-[![Klack demo — keys pressed, clicks fired](docs/images/klack-demo.gif)](https://1vinaypathak.github.io/klack/)
+[![Klack demo — keys pressed, clicks fired](docs/images/klack-demo.gif)](https://11vinaypathak-sys.github.io/klack/)
 
-*Watch it **with sound** at [1vinaypathak.github.io/klack](https://1vinaypathak.github.io/klack/) — every click in the video is the actual WAV the app plays, and the panel is rendered from source, not screen-recorded.*
+*Watch it **with sound** at [11vinaypathak-sys.github.io/klack](https://11vinaypathak-sys.github.io/klack/) — every click in the video is the actual WAV the app plays, and the panel is rendered from source, not screen-recorded.*
 
 **The reel.** The 84-second film about how Klack was made — the story, the process, the first
 click — is on Instagram: **[instagram.com/p/Dc5rn_OzGjC](https://www.instagram.com/p/Dc5rn_OzGjC/)**.
 The full-resolution MP4 is attached to the
-[v1.0 release](https://github.com/1vinaypathak/klack/releases/download/v1.0/Klack-reel.mp4) (167 MB).
+[project page](https://111vinaypathak-sys-sys.github.io/klack/klack-reel.mp4).
 
 ![Klack control panel](docs/images/demo.gif)
 
@@ -32,9 +32,9 @@ The mixer drawer, opened from the MIXER tab:
 
 ## Download
 
-**[Download Klack-1.0.dmg](https://github.com/1vinaypathak/klack/releases/latest)** — macOS 12 or later, Apple silicon and Intel.
+**A signed DMG is not published on this account yet.** For now, [build from source](#build-from-source): one command, about a minute, macOS 12 or later, Apple silicon and Intel. The steps below apply once the app is in **Applications**.
 
-1. Open the DMG and drag **Klack** into **Applications**.
+1. Build, then drag **Klack.app** into **Applications**.
 2. First launch: **right-click Klack.app → Open → Open.** Klack is signed but not notarized
    (no Apple Developer account behind it), so a plain double-click shows "cannot be opened".
    Right-click → Open is Apple's sanctioned way past that, and you only do it once. If macOS
@@ -88,7 +88,7 @@ assembles the bundle, generates the synthesized sound packs on a fresh clone, si
 stable identity, runs three self-test suites, and relaunches the app:
 
 ```bash
-git clone https://github.com/1vinaypathak/klack.git
+git clone https://github.com/11vinaypathak-sys/klack.git
 cd klack
 ./build-scripts/install.sh
 ```
