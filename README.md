@@ -14,7 +14,7 @@ a recording of your actual keyboard into a playable pack.
 **The reel.** The 84-second film about how Klack was made — the story, the process, the first
 click — is on Instagram: **[instagram.com/p/Dc5rn_OzGjC](https://www.instagram.com/p/Dc5rn_OzGjC/)**.
 The full-resolution MP4 is attached to the
-[project page](https://111vinaypathak-sys-sys.github.io/klack/klack-reel.mp4).
+[project page](https://11vinaypathak-sys.github.io/klack/klack-reel.mp4).
 
 ![Klack control panel](docs/images/demo.gif)
 
